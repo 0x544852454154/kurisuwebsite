@@ -860,6 +860,13 @@ test('prefix: per-guild prefix and typed ticket parsing', async () => {
   const parsedMax = await text.parseOptions(message, defs('ticket', 'setup'), text.tokenize('max_open:5 transcripts:true'));
   assert.equal(parsedMax.values.max_open, 5);
   assert.equal(parsedMax.values.transcripts, true);
+  const attachment = { url: 'https://example.invalid/avatar.png', size: 128 };
+  const withAttachment = {
+    ...message,
+    attachments: { size: 1, first: () => attachment },
+  };
+  const parsedAttachment = await text.parseOptions(withAttachment, defs('botprofile', 'avatar'), []);
+  assert.equal(parsedAttachment.values.image, attachment);
 });
 
 function clientForParse() { return { users: { cache: new Map(), fetch: async () => null } }; }

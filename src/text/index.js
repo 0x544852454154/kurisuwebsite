@@ -344,6 +344,12 @@ function validateValues(defs, values) {
 
 async function parseOptions(message, defs, tokens) {
   const values = {};
+  // Prefix commands can carry an image/file attachment. Use the first one for
+  // an Attachment option (e.g. !botprofile avatar), just like the slash picker.
+  const attachmentOpt = defs.find((o) => o.type === T.Attachment);
+  if (attachmentOpt && message.attachments?.size) {
+    values[attachmentOpt.name] = message.attachments.first();
+  }
   for (let idx = 0; idx < tokens.length; idx++) {
     const token = tokens[idx];
     const named = NAMED.exec(token);
@@ -426,7 +432,7 @@ function createInteraction(message, client, command, sub, values, member = messa
       getRole: (name) => values[name]?.role || null,
       getChannel: (name) => values[name]?.channel || null,
       getMentionable: (name) => values[name]?.user || values[name]?.role || null,
-      getAttachment: () => null,
+      getAttachment: (name) => values[name] || null,
       getFocused: () => '',
     },
     async reply(payload) {
