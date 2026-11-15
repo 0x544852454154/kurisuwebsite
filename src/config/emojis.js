@@ -39,6 +39,11 @@ const EMOJIS = {
   adminBadge: '<:1856adminbadge:1570097467079270551>',
   redDot: '<:1523reddot:1570097464365551629>',
   smallRedDot: '<:1476redsmalldot:1570097462151086323>',
+
+  // TODO(owner): upload a red ticket emoji as a guild/application emoji and
+  // replace null with its exact <:name:id>. Until then the UI omits the icon
+  // and uses a plain text label; never substitute a Unicode emoji.
+  ticket: null,
 };
 
 const EMOJI_RE = /^<(a?):([A-Za-z0-9_]{2,32}):(\d{17,20})>$/;
@@ -65,6 +70,7 @@ async function validateEmojis(client) {
   } catch { /* application emojis unavailable */ }
 
   for (const [key, value] of Object.entries(EMOJIS)) {
+    if (value === null) { problems.push(`${key}: no emoji ID configured (TODO: upload it and set the ID)`); continue; }
     const parsed = parseEmoji(value);
     if (!parsed) { problems.push(`${key}: malformed syntax ${value}`); continue; }
     if (!known.has(parsed.id)) problems.push(`${key}: emoji ${parsed.id} not visible to the bot`);

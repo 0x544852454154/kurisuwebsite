@@ -33,11 +33,11 @@ module.exports = [
   { name: Events.GuildRoleCreate, async execute(r) { await logging.send(r.guild, 'role', `${E.modernStaff} ROLE CREATED`, [`Role: ${r.name}`]); } },
   { name: Events.GuildRoleDelete, async execute(r) { await logging.send(r.guild, 'role', `${E.modernStaff} ROLE DELETED`, [`Role: ${r.name}`]); } },
   { name: Events.GuildRoleUpdate, async execute(a, b) {
-    if (a.name !== b.name || !a.permissions.equals(b.permissions)) await logging.send(b.guild, 'role', `${E.modernStaff} ROLE UPDATED`, [`Role: <@&${b.id}>`, a.name !== b.name ? `Name: ${a.name} → ${b.name}` : 'Permissions changed']);
+    if (a.name !== b.name || !a.permissions.equals(b.permissions)) await logging.send(b.guild, 'role', `${E.modernStaff} ROLE UPDATED`, [`Role: <@&${b.id}>`, a.name !== b.name ? `Name: ${a.name} -> ${b.name}` : 'Permissions changed']);
   } },
   { name: Events.VoiceStateUpdate, async execute(a, b) {
     if (a.channelId === b.channelId || !b.guild) return;
-    const what = !a.channelId ? `joined <#${b.channelId}>` : !b.channelId ? `left <#${a.channelId}>` : `moved <#${a.channelId}> → <#${b.channelId}>`;
+    const what = !a.channelId ? `joined <#${b.channelId}>` : !b.channelId ? `left <#${a.channelId}>` : `moved <#${a.channelId}> -> <#${b.channelId}>`;
     await logging.send(b.guild, 'voice', `${E.smallRedDot} VOICE`, [`<@${b.id}> ${what}`]);
   } },
 ];

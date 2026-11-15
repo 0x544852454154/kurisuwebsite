@@ -17,6 +17,8 @@ const CATEGORIES = {
   configuration: { emoji: E.modernRules, name: 'Configuration', desc: 'Configure Kurisu for your server', blurb: 'Logs and server configuration.' },
   administration: { emoji: E.administrator, name: 'Administration', desc: 'Permissions and management', blurb: 'Trusted users and permissions.' },
   verification: { emoji: E.modernVerify, name: 'Verification', desc: 'Verification and access control', blurb: 'Verification and access control.' },
+  tickets: { emoji: E.ticket || E.staff, name: 'Tickets', desc: 'Private support tickets', blurb: 'Private support tickets and staff tools.' },
+  premium: { emoji: E.crown, name: 'Premium', desc: 'Premium guild profile tools', blurb: 'Premium cosmetics; security is never gated.' },
   utility: { emoji: E.redDot, name: 'Utility', desc: 'General bot commands', blurb: 'General bot commands.' },
 };
 
