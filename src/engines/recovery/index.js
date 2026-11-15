@@ -41,6 +41,13 @@ function serializeRole(r) {
 
 async function snapshotChannel(channel) {
   if (!channel.guild || channel.isThread?.()) return;
+  // Ticket channels are private, owned by the ticket system and fully rebuilt by
+  // it. They must never enter antinuke snapshots or automatic restoration. Remove
+  // a snapshot captured before the ticket record was written.
+  if (await repo.getTicketByChannel(channel.guild.id, channel.id).catch(() => null)) {
+    await repo.deleteSnapshot(channel.guild.id, 'channel', channel.id).catch(() => {});
+    return;
+  }
   await repo.saveSnapshot(channel.guild.id, 'channel', channel.id, channel.name, serializeChannel(channel));
 }
 async function snapshotRole(role) {
@@ -63,7 +70,11 @@ async function snapshotGuild(guild) {
   }
 }
 
-function noteDeletedChannel(ch) { if (ch.guild) remember('channel', ch.id, serializeChannel(ch)); }
+async function noteDeletedChannel(ch) {
+  if (!ch.guild) return;
+  if (await repo.getTicketByChannel(ch.guild.id, ch.id).catch(() => null)) return;
+  remember('channel', ch.id, serializeChannel(ch));
+}
 function noteDeletedRole(r) { if (!r.managed) remember('role', r.id, serializeRole(r)); }
 
 async function lookup(guildId, kind, id) {
@@ -93,6 +104,9 @@ function sanitizeOverwrites(guild, overwrites) {
 const note = async (guild, kind, id, result, details) => { await repo.addRecovery(guild.id, kind, id, result, details); return `${result}${details ? ` (${details})` : ''}`; };
 
 async function restoreChannel(guild, oldId) {
+  if (await repo.getTicketByChannel(guild.id, oldId).catch(() => null)) {
+    return note(guild, 'channel', oldId, 'skipped', 'ticket channels are never auto-restored');
+  }
   const data = await lookup(guild.id, 'channel', oldId);
   if (!data) return note(guild, 'channel', oldId, 'skipped', 'no snapshot available');
   try {
@@ -210,6 +224,53 @@ async function removeBot(guild, botId) {
   } catch (err) { return note(guild, 'bot', botId, 'failed', err.message); }
 }
 
+/**
+ * Bot-add containment. The executor ban is already in flight; this removes the
+ * added bot, its integrations/managed roles and any invites it or the executor
+ * created. A bot with an explicit `bot` whitelist entry is left alone.
+ */
+async function containBotAdd(guild, botId, executorId, { trusted = false } = {}) {
+  if (trusted) return note(guild, 'bot', botId, 'skipped', 'trusted bot');
+  const actions = [];
+  try {
+    const member = await guild.members.fetch(botId).catch(() => null);
+    if (member) {
+      try {
+        await guild.members.ban(botId, { reason: 'Kurisu antinuke: unapproved bot', deleteMessageSeconds: 0 });
+        actions.push('bot banned');
+      } catch (err) {
+        const kicked = await member.kick?.('Kurisu antinuke: unapproved bot').then(() => true).catch(() => false);
+        if (kicked) actions.push('bot kicked');
+        else {
+          const dangerous = member.roles.cache.filter((r) => r.id !== guild.id && !r.managed && (r.permissions.bitfield & DANGEROUS_BITS));
+          if (dangerous.size) {
+            await member.roles.remove([...dangerous.keys()], 'Kurisu antinuke: unapproved bot permissions removed').catch(() => {});
+            actions.push('dangerous roles stripped from bot');
+          } else actions.push('bot could not be removed');
+        }
+      }
+    } else actions.push('bot already absent');
+
+    if (typeof guild.fetchIntegrations === 'function') {
+      const integrations = await guild.fetchIntegrations().catch(() => null);
+      let removed = 0;
+      for (const integration of integrations?.values?.() || []) {
+        const owner = integration.user?.id || integration.tags?.bot_id || integration.application?.id;
+        if (owner !== botId && owner !== executorId) continue;
+        await integration.delete?.('Kurisu antinuke: unapproved integration').catch(() => {});
+        removed++;
+      }
+      if (removed) actions.push(`${removed} integration(s) removed`);
+    }
+
+    const invites = await deleteInvitesBy(guild, executorId).catch((err) => err.message);
+    if (typeof invites === 'string' && invites.startsWith('removed')) actions.push(invites);
+    return note(guild, 'bot', botId, 'neutralized', actions.join(', ') || 'no further action needed');
+  } catch (err) {
+    return note(guild, 'bot', botId, 'failed', err.message);
+  }
+}
+
 async function deleteInvitesBy(guild, userId) {
   try {
     const invites = await guild.invites.fetch();
@@ -222,5 +283,5 @@ async function deleteInvitesBy(guild, userId) {
 module.exports = {
   snapshotChannel, snapshotRole, snapshotGuild, noteDeletedChannel, noteDeletedRole,
   restoreChannel, restoreRole, revertRoleUpdate, revertChannelUpdate, revertGuildUpdate,
-  deleteWebhook, removeBot, deleteInvitesBy, serializeChannel, serializeRole,
+  deleteWebhook, removeBot, containBotAdd, deleteInvitesBy, serializeChannel, serializeRole,
 };

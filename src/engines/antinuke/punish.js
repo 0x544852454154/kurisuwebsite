@@ -6,10 +6,10 @@ const { retry } = require('../../utils/helpers');
 const { DANGEROUS_BITS, LIMITS } = require('../../config/settings');
 
 const FALLBACKS = {
-  ban: ['kick', 'quarantine', 'timeout'],
-  kick: ['quarantine', 'timeout'],
+  ban: ['kick', 'quarantine', 'strip', 'timeout'],
+  kick: ['quarantine', 'strip', 'timeout'],
   strip: ['quarantine', 'timeout'],
-  quarantine: ['timeout'],
+  quarantine: ['strip', 'timeout'],
   timeout: [],
 };
 
@@ -42,11 +42,14 @@ async function getQuarantineRole(guild) {
 }
 
 async function attempt(guild, userId, kind, reason) {
+  // A ban needs no member lookup: it must be the very first Discord call after
+  // detection, before any awaited database or cache work.
+  if (kind === 'ban') {
+    await retry(() => guild.members.ban(userId, { reason, deleteMessageSeconds: 0 }));
+    return 'ok';
+  }
   const member = await fetchMember(guild, userId);
   switch (kind) {
-    case 'ban':
-      await retry(() => guild.members.ban(userId, { reason, deleteMessageSeconds: 0 }));
-      return 'ok';
     case 'kick':
       if (!member) throw new Error('executor is not in the server');
       await retry(() => member.kick(reason));

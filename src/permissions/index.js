@@ -1,7 +1,7 @@
 'use strict';
 const { PermissionFlagsBits: P } = require('discord.js');
 const repo = require('../database/repo');
-const { WHITELIST_LEVELS } = require('../config/settings');
+const { WHITELIST_LEVELS, LIMITS } = require('../config/settings');
 const { entryAllows } = require('../config/whitelist');
 
 const botOwners = () => (process.env.OWNER_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -28,6 +28,21 @@ async function canManageSecurity(guild, member) {
   return isOwnerClass(guild, member.id) || await isTrustedAdmin(guild, member);
 }
 
+/**
+ * Opt-in compromised-account guard (default off, owner-only toggle).
+ * A whitelisted account younger than the configured minimum age loses its
+ * whitelist exemption, so a freshly compromised throwaway cannot nuke a server.
+ * Owner-class accounts and Kurisu itself always stay protected.
+ */
+function accountTooNew(guild, userId, member = null) {
+  const settings = repo.cachedGuild(guild.id);
+  if (!settings?.compromised_guard) return false;
+  if (isOwnerClass(guild, userId)) return false;
+  const m = member || guild.members?.cache?.get(userId);
+  const created = Number(m?.user?.createdTimestamp || 0);
+  return !!created && Date.now() - created < LIMITS.compromisedMaxAgeMs;
+}
+
 /** Whitelist authority. Trusted administrators may only manage trusted_mod and bot entries. */
 async function canGrantLevel(guild, member, level) {
   if (!WHITELIST_LEVELS[level]) return { ok: false, reason: 'Unknown whitelist level.' };
@@ -51,6 +66,7 @@ async function canRemoveEntry(guild, member, targetId) {
 async function isExempt(guild, userId, group = 'general', moduleKey = null, member = null) {
   if (userId === guild.client.user.id) return true;
   if (isOwnerClass(guild, userId)) return true;
+  if (accountTooNew(guild, userId, member)) return false;
   const direct = await repo.getWhitelist(guild.id, userId);
   if (direct && entryAllows(direct, group, moduleKey)) return true;
   const m = member || guild.members.cache.get(userId);
@@ -60,6 +76,33 @@ async function isExempt(guild, userId, group = 'general', moduleKey = null, memb
     }
   }
   return false;
+}
+
+/**
+ * Zero-I/O exemption check for the antinuke hot path. Uses the caches filled by
+ * repo.warmGuild(); never awaits a database read before punishing.
+ */
+function isExemptSync(guild, userId, group = 'general', moduleKey = null, member = null) {
+  if (userId === guild.client.user.id) return true;
+  if (isOwnerClass(guild, userId)) return true;
+  if (accountTooNew(guild, userId, member)) return false;
+  const cache = repo.cachedWhitelist(guild.id);
+  const direct = cache.byId.get(String(userId));
+  if (direct && entryAllows(direct, group, moduleKey)) return true;
+  const m = member || guild.members?.cache?.get(userId);
+  if (m?.roles?.cache) {
+    for (const roleEntry of cache.roles) {
+      if (roleEntry.user_id !== guild.id && m.roles.cache.has(roleEntry.user_id) && entryAllows(roleEntry, group, moduleKey)) return true;
+    }
+  }
+  return false;
+}
+
+/** An added bot is approved only when it holds an explicit `bot` whitelist entry (or a bot-owner account). */
+function isTrustedBot(guild, botId) {
+  if (isOwnerClass(guild, botId)) return true;
+  const entry = repo.cachedWhitelist(guild.id).byId.get(String(botId));
+  return !!entry && entry.level === 'bot';
 }
 
 /** Returns an error string, or null when the action is allowed. */
@@ -101,5 +144,6 @@ function rolePosition(guild, member = guild.members.me) {
 
 module.exports = {
   botOwners, isBotOwner, isGuildOwner, isOwnerClass, isTrustedAdmin, canManageSecurity,
-  canGrantLevel, canRemoveEntry, isExempt, checkTarget, botMissing, rolePosition,
+  canGrantLevel, canRemoveEntry, isExempt, isExemptSync, isTrustedBot, accountTooNew,
+  checkTarget, botMissing, rolePosition,
 };

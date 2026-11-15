@@ -9,7 +9,8 @@ let openedWith = null;
 const COLLECTIONS = [
   'guild_settings', 'antinuke_modules', 'raid_config', 'lockdown_channels', 'whitelist', 'warnings',
   'mod_cases', 'incidents', 'log_channels', 'snapshots', 'recovery_log', 'quarantine', 'join_history',
-  'nuke_watch', 'nuke_recent', 'counters',
+  'nuke_watch', 'nuke_recent', 'counters', 'verification', 'verification_users', 'ticket_config', 'tickets',
+  'premium', 'bot_profiles', 'schema_migrations',
 ];
 
 function databaseNameFromUri(uri) {
@@ -73,6 +74,16 @@ async function ensureIndexes(database) {
   await create('nuke_recent', { guild_id: 1, executor_id: 1, created_at: -1 });
   await create('nuke_recent', { guild_id: 1, executor_id: 1, entry_id: 1 }, { unique: true });
   await create('nuke_recent', { created_at_date: 1 }, { expireAfterSeconds: 0 });
+  await create('verification', { guild_id: 1 }, { unique: true });
+  await create('verification_users', { guild_id: 1, user_id: 1 }, { unique: true });
+  await create('ticket_config', { guild_id: 1 }, { unique: true });
+  await create('tickets', { guild_id: 1, ticket_number: 1 }, { unique: true });
+  await create('tickets', { guild_id: 1, channel_id: 1 }, { unique: true });
+  await create('tickets', { guild_id: 1, state: 1, created_at: -1 });
+  await create('tickets', { guild_id: 1, owner_id: 1, state: 1 });
+  await create('premium', { guild_id: 1 }, { unique: true });
+  await create('premium', { expires_at: 1 });
+  await create('bot_profiles', { guild_id: 1 }, { unique: true });
   // counters use the built-in unique _id index (no explicit create needed)
 }
 
@@ -89,6 +100,8 @@ async function open(uri = process.env.DATABASE_URL, { dbName } = {}) {
     const database = mongo.db(name);
     await database.command({ ping: 1 });
     await ensureIndexes(database);
+    const { run } = require('./migrations');
+    await run(database);
     client = mongo;
     db = database;
     openedWith = { name, uri: '<configured>' };

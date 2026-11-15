@@ -16,13 +16,24 @@ const raidCache = new Map();       // guildId -> raid_config doc
 const modulesCache = new Map();    // guildId -> Map(module -> row)
 const whitelistCache = new Map();  // guildId -> { byId: Map, roles: [] }
 const logCache = new Map();        // guildId -> { type: channelId }
+const watchCache = new Map();      // guildId -> Map(userId -> nuke_watch row)
+const incidentCache = new Map();   // guildId -> Map(executorId -> incidents in the last 24h)
+const premiumCache = new Map();    // guildId -> premium row
+const verificationCache = new Map(); // guildId -> verification config
+const warmGuilds = new Set();      // guilds whose read caches are ready for the hot path
 
 const dropGuild = (guildId) => {
-  guildCache.delete(guildId);
-  raidCache.delete(guildId);
-  modulesCache.delete(guildId);
-  whitelistCache.delete(guildId);
-  logCache.delete(guildId);
+  const gid = String(guildId);
+  guildCache.delete(gid);
+  raidCache.delete(gid);
+  modulesCache.delete(gid);
+  whitelistCache.delete(gid);
+  logCache.delete(gid);
+  watchCache.delete(gid);
+  incidentCache.delete(gid);
+  premiumCache.delete(gid);
+  verificationCache.delete(gid);
+  warmGuilds.delete(gid);
 };
 
 function isDup(err) { return err?.code === 11000; }
@@ -53,7 +64,7 @@ async function ensureGuild(guildId) {
   await Promise.all([
     col.updateOne(
       { _id: gid },
-      { $setOnInsert: { _id: gid, antinuke_enabled: 0, raid_enabled: 0, escalation_threshold: 2, quarantine_role_id: null, prefix: '!', created_at: t } },
+      { $setOnInsert: { _id: gid, antinuke_enabled: 0, raid_enabled: 0, escalation_threshold: 2, quarantine_role_id: null, compromised_guard: 0, prefix: '!', created_at: t } },
       { upsert: true },
     ),
     raidCol.updateOne(
@@ -76,13 +87,83 @@ async function getGuild(guildId) {
   if (guildCache.has(gid)) return guildCache.get(gid);
   await ensureGuild(gid);
   const doc = await get().collection('guild_settings').findOne({ _id: gid });
-  const row = { guild_id: gid, antinuke_enabled: 0, raid_enabled: 0, escalation_threshold: 2, quarantine_role_id: null, prefix: '!', created_at: now(), ...clean(doc) };
+  const row = { guild_id: gid, antinuke_enabled: 0, raid_enabled: 0, escalation_threshold: 2, quarantine_role_id: null, compromised_guard: 0, prefix: '!', created_at: now(), ...clean(doc) };
   row.guild_id = gid;
+  if (row.compromised_guard === undefined || row.compromised_guard === null) row.compromised_guard = 0;
   guildCache.set(gid, row);
   return row;
 }
 
-const GUILD_COLS = new Set(['antinuke_enabled', 'raid_enabled', 'escalation_threshold', 'quarantine_role_id', 'prefix']);
+const GUILD_COLS = new Set(['antinuke_enabled', 'raid_enabled', 'escalation_threshold', 'quarantine_role_id', 'compromised_guard', 'prefix']);
+
+// ---------- synchronous hot-path reads (never await before a ban) ----------
+const isWarm = (guildId) => warmGuilds.has(idStr(guildId));
+const cachedGuild = (guildId) => guildCache.get(idStr(guildId)) || null;
+const cachedWhitelist = (guildId) => whitelistCache.get(idStr(guildId)) || { rows: [], byId: new Map(), roles: [] };
+
+function mergeModule(key, row, defs) {
+  const d = defs[key];
+  if (!d) return null;
+  if (!row) return { module: key, enabled: d.defaults.enabled ? 1 : 0, threshold: d.defaults.threshold, window_sec: d.defaults.windowSec, punishment: d.defaults.punishment };
+  return { ...row, module: key };
+}
+function cachedModule(guildId, key, defs) {
+  const map = modulesCache.get(idStr(guildId));
+  return mergeModule(key, map?.get(key), defs);
+}
+function cachedAllModules(guildId, defs) {
+  const map = modulesCache.get(idStr(guildId)) || new Map();
+  return Object.keys(defs).map((key) => mergeModule(key, map.get(key), defs));
+}
+function cachedWatch(guildId, userId, nowMs = Date.now()) {
+  const map = watchCache.get(idStr(guildId));
+  const row = map?.get(idStr(userId));
+  if (!row) return null;
+  if (Number(row.expires_at) <= nowMs) {
+    map.delete(idStr(userId));
+    try { get().collection('nuke_watch').deleteOne({ guild_id: idStr(guildId), user_id: idStr(userId) }).catch(() => {}); } catch { /* database closed */ }
+    return null;
+  }
+  return row;
+}
+function cachedIncidentCount(guildId, executorId) {
+  return incidentCache.get(idStr(guildId))?.get(idStr(executorId)) || 0;
+}
+
+/**
+ * Fill every read cache the antinuke hot path uses. Runs at startup and on
+ * GuildCreate, never inside audit-entry detection (except a cold fallback).
+ */
+async function warmGuild(guildId) {
+  const gid = idStr(guildId);
+  const [guild, , , , , watches] = await Promise.all([
+    getGuild(gid),
+    loadModulesMap(gid),
+    loadWhitelistCache(gid),
+    loadLogCache(gid),
+    getRaid(gid),
+    listNukeWatch(gid),
+  ]);
+  const map = new Map(watches.map((w) => [String(w.user_id), w]));
+  watchCache.set(gid, map);
+
+  const since = now() - 24 * 3600 * 1000;
+  const rows = await get().collection('incidents').aggregate([
+    { $match: { guild_id: gid, created_at: { $gte: since } } },
+    { $group: { _id: '$executor_id', c: { $sum: 1 } } },
+  ]).toArray();
+  incidentCache.set(gid, new Map(rows.map((r) => [String(r._id), Number(r.c) || 0])));
+
+  const prem = await get().collection('premium').findOne({ guild_id: gid });
+  if (prem && Number(prem.expires_at) > now()) premiumCache.set(gid, clean(prem));
+  else premiumCache.delete(gid);
+
+  const verification = await get().collection('verification').findOne({ guild_id: gid });
+  if (verification) verificationCache.set(gid, clean(verification));
+
+  warmGuilds.add(gid);
+  return guild;
+}
 async function setGuild(guildId, col, value) {
   if (!GUILD_COLS.has(col)) throw new Error(`invalid guild column ${col}`);
   const gid = idStr(guildId);
@@ -323,12 +404,19 @@ async function pageWarnings(guildId, userId, limit, offset) {
 
 // ---------- incidents ----------
 async function addIncident(guildId, i) {
+  const gid = idStr(guildId);
   const id = await nextId('incidents');
+  const created = now();
   await get().collection('incidents').insertOne({
-    id, guild_id: idStr(guildId), executor_id: idStr(i.executorId), module: i.module, action: i.action,
+    id, guild_id: gid, executor_id: idStr(i.executorId), module: i.module, action: i.action,
     count: i.count, threshold: i.threshold, response: i.response, status: i.status,
-    details: i.details || null, created_at: now(),
+    details: i.details || null, created_at: created,
   });
+  if (i.executorId && /^\d{17,20}$/.test(String(i.executorId))) {
+    const map = incidentCache.get(gid) || new Map();
+    map.set(String(i.executorId), (map.get(String(i.executorId)) || 0) + 1);
+    incidentCache.set(gid, map);
+  }
   return id;
 }
 async function countIncidents(guildId) { return get().collection('incidents').countDocuments({ guild_id: idStr(guildId) }); }
@@ -412,33 +500,52 @@ async function addRecovery(guildId, kind, targetId, result, details) {
 
 // ---------- nuke watch ----------
 async function addNukeWatch(guildId, userId, reason, expiresAt) {
+  const gid = idStr(guildId);
+  const uid = idStr(userId);
   const t = now();
+  const row = { guild_id: gid, user_id: uid, reason: reason || null, created_at: t, expires_at: expiresAt };
   await get().collection('nuke_watch').updateOne(
-    { guild_id: idStr(guildId), user_id: idStr(userId) },
-    { $set: { guild_id: idStr(guildId), user_id: idStr(userId), reason: reason || null, created_at: t, expires_at: expiresAt, expires_at_date: new Date(expiresAt) } },
+    { guild_id: gid, user_id: uid },
+    { $set: { ...row, expires_at_date: new Date(expiresAt) } },
     { upsert: true },
   );
+  const map = watchCache.get(gid) || new Map();
+  map.set(uid, row);
+  watchCache.set(gid, map);
 }
 async function getNukeWatch(guildId, userId, nowMs = Date.now()) {
-  const row = await get().collection('nuke_watch').findOne({ guild_id: idStr(guildId), user_id: idStr(userId) });
+  const gid = idStr(guildId);
+  const cached = cachedWatch(gid, userId, nowMs);
+  if (cached) return clean(cached);
+  const row = await get().collection('nuke_watch').findOne({ guild_id: gid, user_id: idStr(userId) });
   if (!row) return null;
-  if (row.expires_at <= nowMs) { await removeNukeWatch(guildId, userId); return null; }
+  if (row.expires_at <= nowMs) { await removeNukeWatch(gid, userId); return null; }
+  const map = watchCache.get(gid) || new Map();
+  map.set(String(userId), clean(row));
+  watchCache.set(gid, map);
   return clean(row);
 }
 async function listNukeWatch(guildId, nowMs = Date.now()) {
-  await get().collection('nuke_watch').deleteMany({ guild_id: idStr(guildId), expires_at: { $lte: nowMs } }).catch(() => {});
-  const rows = await get().collection('nuke_watch').find({ guild_id: idStr(guildId), expires_at: { $gt: nowMs } }).sort({ expires_at: -1 }).toArray();
-  return rows.map(clean);
+  const gid = idStr(guildId);
+  await get().collection('nuke_watch').deleteMany({ guild_id: gid, expires_at: { $lte: nowMs } }).catch(() => {});
+  const rows = await get().collection('nuke_watch').find({ guild_id: gid, expires_at: { $gt: nowMs } }).sort({ expires_at: -1 }).toArray();
+  const cleaned = rows.map(clean);
+  watchCache.set(gid, new Map(cleaned.map((r) => [String(r.user_id), r])));
+  return cleaned;
 }
 async function countNukeWatch(guildId, nowMs = Date.now()) {
   return get().collection('nuke_watch').countDocuments({ guild_id: idStr(guildId), expires_at: { $gt: nowMs } });
 }
 async function removeNukeWatch(guildId, userId) {
-  const res = await get().collection('nuke_watch').deleteOne({ guild_id: idStr(guildId), user_id: idStr(userId) });
+  const gid = idStr(guildId);
+  const uid = idStr(userId);
+  const res = await get().collection('nuke_watch').deleteOne({ guild_id: gid, user_id: uid });
+  watchCache.get(gid)?.delete(uid);
   return res.deletedCount > 0;
 }
 async function pruneNukeWatch(nowMs = Date.now()) {
   await get().collection('nuke_watch').deleteMany({ expires_at: { $lte: nowMs } });
+  for (const map of watchCache.values()) for (const [uid, row] of map) if (Number(row.expires_at) <= nowMs) map.delete(uid);
 }
 
 // ---------- nuke recent burst ----------
@@ -483,8 +590,183 @@ async function clearQuarantine(guildId, userId) {
   await get().collection('quarantine').deleteOne({ guild_id: idStr(guildId), user_id: idStr(userId) });
 }
 
+// ---------- verification ----------
+const VERIFICATION_DEFAULTS = { guild_id: null, panel_channel_id: null, panel_message_id: null, role_id: null, enabled: 0 };
+
+async function getVerification(guildId) {
+  const gid = idStr(guildId);
+  if (verificationCache.has(gid)) return { ...verificationCache.get(gid) };
+  const doc = await get().collection('verification').findOne({ guild_id: gid });
+  const row = { ...VERIFICATION_DEFAULTS, guild_id: gid, ...clean(doc || {}) };
+  verificationCache.set(gid, row);
+  return { ...row };
+}
+async function setVerification(guildId, patch) {
+  const gid = idStr(guildId);
+  const allowed = new Set(['panel_channel_id', 'panel_message_id', 'role_id', 'enabled']);
+  const keys = Object.keys(patch);
+  for (const k of keys) if (!allowed.has(k)) throw new Error(`invalid verification column ${k}`);
+  if (!keys.length) return getVerification(gid);
+  await get().collection('verification').updateOne({ guild_id: gid }, { $set: { guild_id: gid, ...patch, updated_at: now() } }, { upsert: true });
+  const current = verificationCache.get(gid) || { ...VERIFICATION_DEFAULTS, guild_id: gid };
+  const next = { ...current, ...patch };
+  verificationCache.set(gid, next);
+  return { ...next };
+}
+async function clearVerification(guildId) {
+  const gid = idStr(guildId);
+  await get().collection('verification').deleteOne({ guild_id: gid });
+  verificationCache.delete(gid);
+}
+async function isVerified(guildId, userId) {
+  const row = await get().collection('verification_users').findOne({ guild_id: idStr(guildId), user_id: idStr(userId) });
+  return !!row;
+}
+async function addVerified(guildId, userId, by = null) {
+  await get().collection('verification_users').updateOne(
+    { guild_id: idStr(guildId), user_id: idStr(userId) },
+    { $set: { guild_id: idStr(guildId), user_id: idStr(userId), verified_at: now(), verified_by: by ? idStr(by) : null } },
+    { upsert: true },
+  );
+}
+async function removeVerified(guildId, userId) {
+  await get().collection('verification_users').deleteOne({ guild_id: idStr(guildId), user_id: idStr(userId) });
+}
+async function countVerified(guildId) {
+  return get().collection('verification_users').countDocuments({ guild_id: idStr(guildId) });
+}
+
+// ---------- tickets ----------
+const TICKET_DEFAULTS = { guild_id: null, panel_channel_id: null, panel_message_id: null, log_channel_id: null, category_id: null, staff_role_id: null, max_open: 3, transcripts: 0 };
+
+async function getTicketConfig(guildId) {
+  const gid = idStr(guildId);
+  const doc = await get().collection('ticket_config').findOne({ guild_id: gid });
+  return { ...TICKET_DEFAULTS, guild_id: gid, ...clean(doc || {}) };
+}
+async function setTicketConfig(guildId, patch) {
+  const gid = idStr(guildId);
+  const allowed = new Set(['panel_channel_id', 'panel_message_id', 'log_channel_id', 'category_id', 'staff_role_id', 'max_open', 'transcripts']);
+  const keys = Object.keys(patch);
+  for (const k of keys) if (!allowed.has(k)) throw new Error(`invalid ticket column ${k}`);
+  if (!keys.length) return getTicketConfig(gid);
+  await get().collection('ticket_config').updateOne({ guild_id: gid }, { $set: { guild_id: gid, ...patch, updated_at: now() } }, { upsert: true });
+  return getTicketConfig(gid);
+}
+async function nextTicketNumber(guildId) {
+  const gid = idStr(guildId);
+  const c = await get().collection('counters').findOneAndUpdate(
+    { _id: `ticket:${gid}` },
+    { $inc: { seq: 1 } },
+    { upsert: true, returnDocument: 'after' },
+  );
+  return Number(c?.seq || 0);
+}
+async function createTicket(guildId, { number, channelId, ownerId, topic = null }) {
+  const row = {
+    guild_id: idStr(guildId), ticket_number: Number(number), channel_id: idStr(channelId), owner_id: idStr(ownerId),
+    state: 'open', claimed_by: null, topic, created_at: now(), closed_at: null,
+  };
+  await get().collection('tickets').insertOne(row);
+  return clean(row);
+}
+async function getTicket(guildId, number) {
+  const row = await get().collection('tickets').findOne({ guild_id: idStr(guildId), ticket_number: Number(number) });
+  return row ? clean(row) : null;
+}
+async function getTicketByChannel(guildId, channelId) {
+  const row = await get().collection('tickets').findOne({ guild_id: idStr(guildId), channel_id: idStr(channelId) });
+  return row ? clean(row) : null;
+}
+async function listTickets(guildId, { state = null, limit = 100 } = {}) {
+  const q = { guild_id: idStr(guildId) };
+  if (state) q.state = state;
+  const rows = await get().collection('tickets').find(q).sort({ ticket_number: -1 }).limit(limit).toArray();
+  return rows.map(clean);
+}
+async function countOpenTickets(guildId, ownerId = null) {
+  const q = { guild_id: idStr(guildId), state: 'open' };
+  if (ownerId) q.owner_id = idStr(ownerId);
+  return get().collection('tickets').countDocuments(q);
+}
+async function updateTicket(guildId, number, patch) {
+  const gid = idStr(guildId);
+  const allowed = new Set(['state', 'claimed_by', 'topic', 'closed_at']);
+  const keys = Object.keys(patch);
+  for (const k of keys) if (!allowed.has(k)) throw new Error(`invalid ticket column ${k}`);
+  if (!keys.length) return getTicket(gid, number);
+  await get().collection('tickets').updateOne({ guild_id: gid, ticket_number: Number(number) }, { $set: patch });
+  return getTicket(gid, number);
+}
+
+// ---------- premium + guild member profile ----------
+const PREMIUM_DEFAULTS = { guild_id: null, enabled_by: null, enabled_at: null, expires_at: null, plan: 'premium' };
+
+function premiumActive(row, nowMs = now()) {
+  return !!(row && Number(row.expires_at) > nowMs);
+}
+async function getPremium(guildId, nowMs = now()) {
+  const gid = idStr(guildId);
+  let row = premiumCache.get(gid);
+  if (!row) {
+    row = await get().collection('premium').findOne({ guild_id: gid });
+    if (row) row = clean(row);
+  }
+  if (!row) return null;
+  if (!premiumActive(row, nowMs)) {
+    await get().collection('premium').deleteOne({ guild_id: gid });
+    premiumCache.delete(gid);
+    return null;
+  }
+  premiumCache.set(gid, row);
+  return { ...row };
+}
+async function setPremium(guildId, { enabledBy = null, expiresAt, plan = 'premium' }) {
+  const gid = idStr(guildId);
+  const row = { guild_id: gid, enabled_by: enabledBy ? idStr(enabledBy) : null, enabled_at: now(), expires_at: Number(expiresAt), plan };
+  await get().collection('premium').updateOne({ guild_id: gid }, { $set: row }, { upsert: true });
+  premiumCache.set(gid, row);
+  return { ...row };
+}
+async function clearPremium(guildId) {
+  const gid = idStr(guildId);
+  await get().collection('premium').deleteOne({ guild_id: gid });
+  premiumCache.delete(gid);
+}
+async function listPremium(nowMs = now()) {
+  const rows = await get().collection('premium').find({ expires_at: { $gt: nowMs } }).sort({ expires_at: 1 }).toArray();
+  return rows.map(clean);
+}
+async function expirePremiums(nowMs = now()) {
+  const rows = await get().collection('premium').find({ expires_at: { $lte: nowMs } }).toArray();
+  if (!rows.length) return [];
+  await get().collection('premium').deleteMany({ expires_at: { $lte: nowMs } });
+  for (const r of rows) premiumCache.delete(String(r.guild_id));
+  return rows.map((r) => ({ ...clean(r), guild_id: String(r.guild_id) }));
+}
+
+async function getBotProfile(guildId) {
+  const row = await get().collection('bot_profiles').findOne({ guild_id: idStr(guildId) });
+  return row ? clean(row) : null;
+}
+async function setBotProfile(guildId, patch) {
+  const gid = idStr(guildId);
+  await get().collection('bot_profiles').updateOne(
+    { guild_id: gid },
+    { $set: { guild_id: gid, ...patch, updated_at: now() } },
+    { upsert: true },
+  );
+  return getBotProfile(gid);
+}
+async function clearBotProfile(guildId) {
+  await get().collection('bot_profiles').deleteOne({ guild_id: idStr(guildId) });
+}
+
 // Exposed for tests/migration utilities
-function _dropCaches() { guildCache.clear(); raidCache.clear(); modulesCache.clear(); whitelistCache.clear(); logCache.clear(); }
+function _dropCaches() {
+  guildCache.clear(); raidCache.clear(); modulesCache.clear(); whitelistCache.clear(); logCache.clear();
+  watchCache.clear(); incidentCache.clear(); premiumCache.clear(); verificationCache.clear(); warmGuilds.clear();
+}
 
 module.exports = {
   ensureGuild, getGuild, setGuild, getModule, getAllModules, saveModule, getRaid, setRaid, getLockedChannels, saveLockedChannel,
@@ -495,5 +777,11 @@ module.exports = {
   saveSnapshot, getSnapshot, listSnapshots, deleteSnapshot, addRecovery, saveQuarantine, getQuarantine, clearQuarantine,
   addNukeWatch, getNukeWatch, listNukeWatch, countNukeWatch, removeNukeWatch, pruneNukeWatch,
   addNukeRecent, listNukeRecent, clearNukeRecent, pruneNukeRecent,
+  isWarm, cachedGuild, cachedModule, cachedAllModules, cachedWhitelist, cachedWatch, cachedIncidentCount, warmGuild,
+  getVerification, setVerification, clearVerification, isVerified, addVerified, removeVerified, countVerified,
+  getTicketConfig, setTicketConfig, nextTicketNumber, createTicket, getTicket, getTicketByChannel, listTickets,
+  countOpenTickets, updateTicket,
+  getPremium, setPremium, clearPremium, listPremium, expirePremiums, premiumActive,
+  getBotProfile, setBotProfile, clearBotProfile,
   nextId, ensureCounterAtLeast, _dropCaches, dropGuild,
 };

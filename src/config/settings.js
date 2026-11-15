@@ -27,6 +27,7 @@ const WHITELIST_LEVELS = {
 const LOG_TYPES = {
   antinuke: 'Antinuke', raid: 'Raid', moderation: 'Moderation', member: 'Member',
   message: 'Message', channel: 'Channel', role: 'Role', voice: 'Voice', config: 'Configuration',
+  ticket: 'Ticket',
 };
 
 const LIMITS = {
@@ -38,6 +39,14 @@ const LIMITS = {
   incidentsPerPage: 5,
   bansPerPage: 10,
   guildsPerPage: 8,
+  ticketsPerPage: 8,
+  premiumPerPage: 8,
+  verifyCooldownMs: 5_000,
+  transcriptMessageLimit: 500,
+  ticketDeleteDelayMs: 10_000,
+  compromisedMaxAgeMs: 7 * 24 * 3600 * 1000,
+  premiumMaxDays: 3650,
+  profileMaxBytes: 8 * 1024 * 1024,
 };
 
 module.exports = {
