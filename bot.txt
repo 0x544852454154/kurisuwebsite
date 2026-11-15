@@ -46,7 +46,7 @@ Main areas:
 
 Current scale:
   - 42 top-level slash commands.
-  - 71 help entries (top-level commands + subcommands).
+  - 72 help entries (top-level commands + subcommands).
   - 28 antinuke modules.
   - 37 automated tests, all passing.
   - Version 2.1.0.
@@ -154,9 +154,13 @@ MongoDB credentials from the message.
 
 3.4 PREMIUM / PROFILE
   /premium enable [guild_id] [days]
+  /premium activate [guild_id] [days]
   /premium disable [guild_id]
   /premium list [page]
-    - Bot owner only. /premium list is global and works outside a guild.
+    - Bot owner only. activate is an alias for enable.
+    - /premium list is global and works outside a guild.
+    - Every premium path acknowledges ephemerally before database or logging
+      work, so slow Mongo/log delivery cannot cause an interaction timeout.
     - Premium rows have expires_at; expiry is enforced lazily by getPremium()
       and by an hourly/startup sweep.
     - Expiry removes the row and resets the cosmetic guild-member profile.
@@ -612,7 +616,7 @@ Task C - Tickets:
   - Manual-delete risk stated in the UI.
 
 Task D - Premium / profile:
-  - Bot-owner-only /premium enable|disable|list.
+  - Bot-owner-only /premium enable|activate|disable|list.
   - Premium rows with expiry; lazy + startup/hourly reset.
   - /botprofile avatar|banner|reset|view for premium guilds.
   - Guild-member profile endpoint, image validation, flags only.
@@ -638,7 +642,7 @@ updated to match the code.
 Bot permissions integer : 1100451490998
 Default prefix          : !
 Commands                : 42
-Help entries            : 71
+Help entries            : 72
 Antinuke modules        : 28
 Tests                   : 37 passing
 UI                      : Components V2, grey buttons, red emojis only

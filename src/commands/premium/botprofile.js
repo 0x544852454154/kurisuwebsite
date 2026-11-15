@@ -71,6 +71,10 @@ module.exports = {
   async execute(i) {
     const err = guard(i, { bot: [] });
     if (err) return fail(i, err);
+
+    // Acknowledge before permission, premium and image work. Image downloads
+    // and editMe() can easily exceed Discord's 3-second interaction window.
+    await i.deferReply({ flags: 64 }).catch(() => {});
     if (!(await perms.canManageSecurity(i.guild, i.member))) return fail(i, 'Only the server owner, bot owner or a Trusted Administrator can change the bot profile.');
     const isPremium = await premium.active(i.guild);
     if (!isPremium) return fail(i, 'Guild-member profiles are a premium feature. Security features remain fully available without premium.');
@@ -78,16 +82,15 @@ module.exports = {
     const profile = await repo.getBotProfile(i.guild.id).catch(() => null);
 
     if (sub === 'view') {
-      return i.reply(ui.message([
+      return i.editReply(ui.edit([
         `### ${ICON} GUILD-MEMBER PROFILE`,
         `Avatar: **${profile?.avatar ? 'Custom' : 'Default'}**\nBanner: **${profile?.banner ? 'Custom' : 'Default'}**`,
         'sep',
         '-# This profile is scoped to this server only. It never changes Kurisu\'s global avatar.',
-      ], { ephemeral: true }));
+      ]));
     }
 
     if (sub === 'reset') {
-      await i.deferReply({ flags: 64 }).catch(() => {});
       try {
         await i.guild.members.editMe({ avatar: null, banner: null, reason: `Kurisu premium: reset by ${i.user.tag || i.user.id}` });
       } catch (e) {
@@ -98,7 +101,6 @@ module.exports = {
       return i.editReply(ui.edit([`${ICON} Guild-member profile reset to default.`]));
     }
 
-    await i.deferReply({ flags: 64 }).catch(() => {});
     let image;
     try {
       image = await loadImage(i);

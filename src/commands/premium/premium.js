@@ -20,10 +20,14 @@ const daysLabel = (ms) => {
 module.exports = {
   category: 'premium', permission: 'Bot Owner',
   examples: {
-    enable: '/premium enable [guild_id] [days]', disable: '/premium disable [guild_id]', list: '/premium list [page]',
+    enable: '/premium enable [guild_id] [days]', activate: '/premium activate [guild_id] [days]',
+    disable: '/premium disable [guild_id]', list: '/premium list [page]',
   },
   data: new SlashCommandBuilder().setName('premium').setDescription('Manage premium guilds (bot owner only).')
     .addSubcommand((s) => s.setName('enable').setDescription('Enable premium for a guild.')
+      .addStringOption((o) => o.setName('guild_id').setDescription('Guild ID; defaults to this server.'))
+      .addIntegerOption((o) => o.setName('days').setDescription('Duration in days (default 30).').setMinValue(1).setMaxValue(LIMITS.premiumMaxDays)))
+    .addSubcommand((s) => s.setName('activate').setDescription('Enable premium for a guild (same as enable).')
       .addStringOption((o) => o.setName('guild_id').setDescription('Guild ID; defaults to this server.'))
       .addIntegerOption((o) => o.setName('days').setDescription('Duration in days (default 30).').setMinValue(1).setMaxValue(LIMITS.premiumMaxDays)))
     .addSubcommand((s) => s.setName('disable').setDescription('Disable premium for a guild.')
@@ -32,6 +36,10 @@ module.exports = {
       .addIntegerOption((o) => o.setName('page').setDescription('Page number.').setMinValue(1))),
   async execute(i) {
     if (!perms.isBotOwner(i.user.id)) return fail(i, 'This command is limited to the bot owner.');
+
+    // Acknowledge before any database or logging call. Premium writes and log
+    // delivery can be slow enough to miss Discord's 3-second interaction window.
+    await i.deferReply({ flags: 64 }).catch(() => {});
     const sub = i.options.getSubcommand();
 
     // /premium list is global and works even outside a guild.
@@ -45,27 +53,27 @@ module.exports = {
       const lines = slice.length
         ? slice.map((r) => `${r.enabled_by ? `<@${r.enabled_by}>` : 'Unknown'}  ·  guild \`${r.guild_id}\`  ·  ${daysLabel(r.expires_at)} left`).join('\n')
         : 'No active premium guilds.';
-      return i.reply(ui.message([
+      return i.editReply(ui.edit([
         `### ${ICON} PREMIUM GUILDS`,
         `-# ${rows.length} active  ·  page ${p}/${pages}`,
         'sep',
         lines,
         'sep',
         '-# Premium only unlocks cosmetic guild-member profiles. Security features are never gated.',
-      ], { ephemeral: true }));
+      ]));
     }
 
     const raw = i.options.getString('guild_id');
     const guildId = raw || i.guildId;
     if (!GUILD_ID.test(String(guildId))) return fail(i, 'Provide a valid guild ID.');
     const guild = i.client?.guilds?.cache?.get(String(guildId)) || i.guild;
-    if (sub === 'enable') {
+    if (sub === 'enable' || sub === 'activate') {
       const days = i.options.getInteger('days') || 30;
       const row = await repo.setPremium(guildId, { enabledBy: i.user.id, expiresAt: Date.now() + days * 86_400_000 });
       if (guild && String(guild.id) === String(guildId)) {
         await logging.send(guild, 'config', `${ICON} PREMIUM ENABLED`, [`By: <@${i.user.id}>`, `Expires: <t:${Math.floor(row.expires_at / 1000)}:F>`]).catch(() => {});
       }
-      return i.reply(ui.notice(ICON, `Premium enabled for \`${guildId}\` until <t:${Math.floor(row.expires_at / 1000)}:F>.`, { ephemeral: true }));
+      return i.editReply(ui.edit([`${ICON} Premium enabled for \`${guildId}\` until <t:${Math.floor(row.expires_at / 1000)}:F>.`]));
     }
 
     const existing = await repo.getPremium(guildId);
@@ -75,6 +83,6 @@ module.exports = {
       await premium.resetProfile(guild).catch(() => {});
       await logging.send(guild, 'config', `${ICON} PREMIUM DISABLED`, [`By: <@${i.user.id}>`]).catch(() => {});
     }
-    return i.reply(ui.notice(ICON, `Premium disabled for \`${guildId}\`. The guild profile was reset.`, { ephemeral: true }));
+    return i.editReply(ui.edit([`${ICON} Premium disabled for \`${guildId}\`. The guild profile was reset.`]));
   },
 };

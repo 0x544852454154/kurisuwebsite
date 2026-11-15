@@ -6,7 +6,7 @@ Discord antinuke, raid protection, tickets and moderation bot. discord.js 14, Co
 MongoDB. Red custom emojis are the only colour: no accent bars, no embeds, grey (secondary)
 buttons only.
 
-Current release: **2.1.0**. 42 top-level commands, 71 help entries, 28 antinuke modules.
+Current release: **2.1.0**. 42 top-level commands, 72 help entries, 28 antinuke modules.
 
 ## What is included
 
@@ -19,7 +19,7 @@ Current release: **2.1.0**. 42 top-level commands, 71 help entries, 28 antinuke 
 | Whitelist | Users **and roles**, with per-entry scopes for every module; trusted_admin, trusted_mod, bypass, trusted bot; owner protections cannot be removed |
 | Verification panel | `/verification panel <channel> [role]`, public stable `kv:verify` button, role creation/validation, hierarchy checks, 5s click cooldown, raid/account-age gate, member log |
 | Tickets | `/ticket panel\|setup\|close\|add\|remove\|claim\|list`, private channels, atomic numbering, max-open limit, confirmation close, optional log-channel-only transcripts |
-| Premium | Bot-owner-only `/premium enable\|disable\|list`; expiry is enforced lazily and at startup; security features are never gated |
+| Premium | Bot-owner-only `/premium enable\|activate\|disable\|list`; expiry is enforced lazily and at startup; security features are never gated |
 | Guild profile | `/botprofile avatar\|banner\|reset\|view` for premium servers; guild-member scoped, PNG/JPEG/GIF/WebP up to 8 MB, only flags stored |
 | Moderation | `/ban /unban /kick /timeout /untimeout /warn /warnings /purge /clear /slowmode /lock /unlock /hide /unhide /nickname /role add\|remove /softban /massban /masskick /case view\|user /banlist` |
 | Security Center | `/security` dashboard: modules, thresholds, punishments, whitelist, logs, raid, log channels, diagnostics, read-only premium status |
@@ -83,7 +83,8 @@ antinuke snapshots, automatic restoration and raid lockdown.
 
 ## Premium and guild profile
 
-`/premium` is bot-owner only. It enables or disables premium for a guild and lists active guilds.
+`/premium` is bot-owner only. `enable` and its alias `activate` turn premium on for a guild;
+`disable` turns it off and `list` shows active guilds.
 
 `/botprofile avatar|banner|reset|view` changes only Kurisu's **guild-member** profile in that
 server, never the global avatar. Images must be PNG, JPEG, GIF or WebP and at most 8 MB. Kurisu
@@ -314,6 +315,7 @@ edge cases. Never run destructive tests on a real community.
 |---|---|
 | Emojis show as text | The bot cannot see them; use Application Emojis or join the emoji server. Check the startup warning. |
 | Slash commands missing | Run `npm run deploy`; global commands can take a while, use `DEV_GUILD_ID` when testing. |
+| "The application did not respond" | Deploy the current command schema with `npm run deploy`, restart the bot, and retry. Premium and profile commands acknowledge immediately before slow work. |
 | "Used disallowed intents" | Enable Server Members Intent and Message Content Intent in the Portal. |
 | Database connection fails | Check `DATABASE_URL`, the Atlas IP allowlist and `DATABASE_NAME`. |
 | No incidents appear | Bot lacks View Audit Log, or the module/antinuke is disabled, or the actor is whitelisted. |

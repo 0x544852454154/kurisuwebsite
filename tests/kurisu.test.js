@@ -691,15 +691,34 @@ test('premium: bot-owner enable/disable and expiry sweep resets the guild profil
     values: { commandName: 'premium' }, options: { subcommand: 'enable', guild_id: gid, days: 2 },
   });
   await cmd.execute(enable.i);
+  assert.ok(enable.i.deferred, 'premium acknowledges before the database write');
+  assert.match(plain(enable.sink.edited), /Premium enabled/);
   const row = await repo.getPremium(gid);
   assert.ok(row);
   assert.equal(row.enabled_by, 'botowner');
+
+  const activate = interaction({
+    guild, member: owner, user: owner.user, client: guild.client,
+    values: { commandName: 'premium' }, options: { subcommand: 'activate', guild_id: gid, days: 3 },
+  });
+  await cmd.execute(activate.i);
+  assert.ok(activate.i.deferred);
+  assert.match(plain(activate.sink.edited), /Premium enabled/, 'activate is an alias for enable');
+
+  const list = interaction({
+    guild, member: owner, user: owner.user, client: guild.client,
+    values: { commandName: 'premium' }, options: { subcommand: 'list', page: 1 },
+  });
+  await cmd.execute(list.i);
+  assert.ok(list.i.deferred);
+  assert.match(plain(list.sink.edited), /PREMIUM GUILDS/);
 
   const nonOwner = interaction({
     guild, member: { id: 'rando', permissions: bits(0) }, user: { id: 'rando' },
     values: { commandName: 'premium' }, options: { subcommand: 'enable' },
   });
   await cmd.execute(nonOwner.i);
+  assert.equal(nonOwner.i.deferred, false);
   assert.match(plain(nonOwner.sink.replied), /bot owner/);
 
   const edits = [];
@@ -808,7 +827,7 @@ test('commands: every required top-level command exists and loads with a categor
   for (const name of required) assert.ok(commands.has(name), `missing /${name}`);
   assert.equal(commands.size, 42);
   assert.deepEqual(commands.get('ticket').data.toJSON().options.map((o) => o.name), ['panel', 'setup', 'close', 'add', 'remove', 'claim', 'list']);
-  assert.deepEqual(commands.get('premium').data.toJSON().options.map((o) => o.name), ['enable', 'disable', 'list']);
+  assert.deepEqual(commands.get('premium').data.toJSON().options.map((o) => o.name), ['enable', 'activate', 'disable', 'list']);
   assert.ok(commands.get('verification').data.toJSON().options.some((o) => o.name === 'panel'));
 });
 

@@ -4,6 +4,15 @@ Kurisu Security 2.1.0 - change summary
 This file summarizes the 2.1.0 implementation. The repository was already on
 MongoDB before this release; bot.txt and README now match the code.
 
+LIVE COMMAND FIX
+  - Added /premium activate as an alias for /premium enable.
+  - /premium and /botprofile now defer their ephemeral reply before database,
+    permission, download or logging work, preventing "Application did not
+    respond" timeouts on slower hosts.
+  - After pulling this change, run `npm run deploy` (or set AUTO_DEPLOY=true)
+    so Discord receives the command schema. Adding a command in code does not
+    register it by itself.
+
 TASK A - ANTINUKE HARDENING
   - Hardened critical module defaults to ban:
     channelDelete, roleDelete, botAdd, permEscalation, automodRule,
