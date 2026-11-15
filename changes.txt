@@ -1,108 +1,84 @@
-Kurisu MongoDB migration - code changes (session summary)
-=======================================================
+Kurisu Security 2.1.0 - change summary
+======================================
 
-CREATED
-- scripts/migrate-sqlite-to-mongo.js
-  - Reads SQLite (DATABASE_PATH, default ./data/kurisu.db) via better-sqlite3 in read-only mode.
-  - Requires DATABASE_URL, refuses to run without it, never prints the URI (scrubs in errors).
-  - Supports --dry-run (no Mongo writes), warns to back up data/kurisu.db.
-  - Maps all §9.0 tables to Mongo collections with correct field types, string snowflakes, epoch ms timestamps.
-  - Converts nuke_watch.expires_at -> expires_at_date and nuke_recent.created_at -> created_at_date for TTL.
-  - Parses JSON-stored scopes/roles/module_keys/data where present; idempotent via upserts per natural key.
-  - Seeds global counters (cases/incidents/warnings/recovery_log/join_history) and per-guild mod_cases counters to max IDs.
-  - Prints per-table SQLite vs Mongo counts with PASS/FAIL verification and exits non-zero on mismatch/failure.
-- changes.txt
-  - This changelog of modified/created files.
+This file summarizes the 2.1.0 implementation. The repository was already on
+MongoDB before this release; bot.txt and README now match the code.
 
-MODIFIED
-- package.json
-  - Bumped version to 2.0.0.
-  - Added dependency: mongodb.
-  - Moved better-sqlite3 to optionalDependencies (kept available for migration script until migration/tests verified).
-  - Added devDependency: mongodb-memory-server.
-  - Added script: "migrate:mongo": "node scripts/migrate-sqlite-to-mongo.js".
+TASK A - ANTINUKE HARDENING
+  - Hardened critical module defaults to ban:
+    channelDelete, roleDelete, botAdd, permEscalation, automodRule,
+    vanityChange, prune, massUnban, webhookDelete, nukeGuard, massBan, massKick.
+  - Ban starts before mitigation and before any awaited persistence.
+  - Punishment fallback: ban -> kick -> quarantine -> strip dangerous roles ->
+    timeout.
+  - Bot-add containment: ban/kick the added bot, remove integrations and
+    dangerous roles, delete executor invites; trusted bots are skipped.
+  - Hot-path in-memory caches for guild settings, modules, whitelist, watches
+    and incident counts.
+  - Concurrent punishment + mitigation, category-first restoration with at
+    most 3 restore tasks at once.
+  - Re-entrant per-executor locks and an already-punished set.
+  - Persistent 24h watch survives a ban and restarts; watched rejoins/actions
+    are banned.
+  - Data migration removes only exact legacy default rows and preserves custom
+    rows; idempotent via schema_migrations.
+  - Optional compromised-account guard, default off, owner-only toggle.
+  - Added/updated modules, punish, recovery, permissions and repository code.
 
-- .env.example
-  - Added placeholder DATABASE_URL (never a real URI) and DATABASE_NAME (default prismo) for MongoDB Atlas.
-  - Kept DATABASE_PATH documented for SQLite?Mongo migration reads.
+TASK B - VERIFICATION PANEL
+  - /verification panel <channel> [role], config, remove.
+  - Public stable kv:verify panel; optional removal of the old panel.
+  - Verified role creation/validation, dangerous-permission and hierarchy
+    checks.
+  - Ephemeral notices, 5s cooldown, raid/account-age gate, member log.
+  - Mongo verification and verification_users collections/indexes.
+  - Help category and command coverage.
 
-- src/database/index.js
-  - Replaced better-sqlite3/SQLite initialization with official mongodb driver.
-  - Added async open(uri), get(), async close(), async ping(), info(), URI redaction helper, DB name derivation (URI path or DATABASE_NAME, default prismo).
-  - open() connects, selects DB, pings, and ensures indexes before returning; throws scrubbed fatal errors without credentials.
-  - Implemented ensureIndexes() for all collections/indexes from §9.0 including unique indexes (guild_settings/raid_config _id, antinuke_modules, whitelist, log_channels, snapshots, nuke_watch, nuke_recent, quarantine, lockdown_channels, guild+case_number for mod_cases) and TTL indexes (nuke_watch.expires_at_date, nuke_recent.created_at_date).
-  - Added SIGINT/SIGTERM-friendly shutdown hook to close client.
+TASK C - TICKETS
+  - /ticket panel|setup|close|add|remove|claim|list.
+  - Private ticket channels, atomic ticket numbering, max-open limit.
+  - Confirmation close and delayed channel removal.
+  - Transcripts off by default; when enabled, sent only to the ticket log
+    channel and never stored in MongoDB.
+  - Ticket log type; ticket_config and tickets collections/indexes.
+  - Ticket channels excluded from antinuke snapshots, restoration and lockdown.
+  - Manual deletion risk stated in the panel/setup UI.
+  - Closing by number from another channel always targets the ticket channel,
+    never the invoking channel.
 
-- src/database/repo.js
-  - Full async rewrite for MongoDB with API parity for existing callers.
-  - Keeps Discord snowflakes as strings and timestamps as epoch milliseconds; does not expose ObjectIds.
-  - Added counters collection support with atomic nextId(name) (findOneAndUpdate , upsert, returnDocument after) and ensureCounterAtLeast; per-guild mod case numbering via guild-scoped counter key with 11000 retry.
-  - Added TTL-compatible date fields: nuke_watch.expires_at_date, nuke_recent.created_at_date; still filters expiry in code.
-  - Added in-memory caches with invalidate-on-write for hot reads: guild settings, raid config, antinuke modules, whitelist (by id/roles), log channels; exposed dropGuild/_dropCaches helpers.
-  - Race-safe upserts/atomic operators used for config, modules, raid, whitelist, logs, snapshots, quarantine, nuke watch/recent, lockdown channels.
-  - Normalizes stored JSON-like fields (scopes/roles/module_keys/data) to runtime-friendly shapes.
+TASK D - PREMIUM / GUILD PROFILE
+  - Bot-owner-only /premium enable|disable|list.
+  - Premium rows with expiry; lazy getPremium() expiry plus startup/hourly
+    sweep resets the cosmetic guild-member profile.
+  - /botprofile avatar|banner|reset|view for premium servers.
+  - Uses guild.members.editMe() (guild-scoped, not global avatar).
+  - PNG/JPEG/GIF/WebP validation with an 8 MB limit and magic-byte checks.
+  - Stores only avatar/banner flags, never image data.
+  - Read-only Premium line in Security Center.
+  - No security, antinuke, raid or ticket feature is gated by premium.
 
-- src/index.js
-  - Replaced synchronous SQLite startup with async main(): awaits db.open() before client.login().
-  - Added credential-scrubbing fatal handler; removed better-sqlite3-specific error messaging.
-  - Added clear fatal on missing/failed DATABASE_URL connection (advises Atlas IP allowlist) and async DB close on SIGINT/SIGTERM shutdown.
-  - Preserved existing intents, command loading, event wiring, timers, and login error hints.
+TASK E - EMOJI / THEME SWEEP
+  - Scanned src/ for Unicode emoji and replaced arrows/other symbols.
+  - Added ticket: null placeholder with an explicit TODO; startup validation
+    reports it without crashing and ticket UI falls back to the staff icon.
+  - Regression tests enforce no Unicode emoji, raw embeds, accent colours or
+    non-secondary buttons.
+  - Consistent red-emoji, colourless Components V2 design.
 
-- src/permissions/index.js
-  - Converted whitelist/authority checks to async for Mongo-backed repo: isTrustedAdmin, canManageSecurity, canGrantLevel, canRemoveEntry, isExempt (awaits whitelist/role whitelist lookups).
+DOCUMENTATION / VERSION
+  - README.md rewritten for MongoDB, the new features and the current test
+    suite.
+  - bot.txt updated to 2.1.0 with current architecture, commands, database,
+    rules and known limits.
+  - package.json and package-lock.json bumped to 2.1.0.
+  - .env.example already documents MongoDB; kept in sync.
 
-- src/text/index.js
-  - Made prefix lookup async (getPrefix awaits repo.getGuild) with in-memory cache retained; handle() awaits prefix; clearPrefix preserved for invalidation.
+TESTS
+  - tests/kurisu.test.js converted to an async MongoDB suite using
+    mongodb-memory-server.
+  - 37 tests passing.
+  - Remaining manual checks: live Discord commands, real audit-log delivery,
+    emoji rendering, large-channel lockdown and recovery, hierarchy edge cases.
 
-- src/engines/logging.js
-  - send() now awaits repo.getLogChannel (async Mongo/log cache).
-
-- src/events/core.js
-  - Await repo.ensureGuild on ready/guild create; async snapshot scheduling guarded to avoid capturing during recent incidents; await recovery snapshot/delete hooks and raid tick compatibility preserved.
-
-- src/events/mentions.js
-  - Awaits async text.getPrefix when rendering mention reply.
-
-- src/events/guildlogs.js
-  - Kept async logging delivery compatible with async log channel/config reads.
-
-- src/components/dashboard/diagnostics.js
-  - Converted checks/view to async; database check now pings Mongo via db.ping() and reports DB name only (no URI/path secrets).
-
-- src/components/help/index.js
-  - Updated prefix resolution to async and adjusted initial/handle/render flow to await async data (text.getPrefix, perms.canManageSecurity, dashboard rendering) for Mongo-backed reads.
-
-- src/commands/utility/help.js
-  - Awaits async prefix and help.initial rendering.
-
-- src/commands/configuration/prefix.js
-  - Awaits perms.canManageSecurity/repo.getGuild/repo.setGuild; preserves prefix cache invalidation and config logging.
-
-- src/commands/security/security.js
-  - Awaits perms.canManageSecurity and async dashboard rendering.
-
-- src/commands/whitelist/whitelist.js
-  - Converted add/remove/describe/execute to async with awaited perms/repo operations and async config logging.
-
-- src/engines/antinuke/index.js
-  - Converted to async repo/perms/logging/recovery integration.
-  - Preserved in-memory windows/seen/locks/mitigated/alerted; nuke burst window mirrored to Mongo but persisted rows loaded only when process-local window is empty (no per-audit DB round-trip during live burst).
-  - Async watch/incident persistence, mitigation, cleanup (prune watch/recent), and exemption checks.
-
-- src/engines/antinuke/punish.js
-  - Converted quarantine role lookup/save and quarantine snapshot persistence to async repo calls.
-
-- src/engines/raid/index.js
-  - Converted join handling, escalation, verification, lockdown/unlock, tick, and incident logging to async repo/perms/moderation calls.
-
-- src/engines/moderation/index.js
-  - record() now awaits async repo.addCase and logging.
-
-- src/engines/recovery/index.js
-  - Converted snapshot save/list/delete, lookup, recovery logging, restore/revert flows to async repo operations.
-
-NOTES / REMAINING WORK
-- Many command/component files outside the ones listed above still contain synchronous repo/perms usages from the SQLite implementation and require async/await conversion (dashboard UI handlers, most moderation/security/configuration commands, guildlog consumers as needed) to be fully compatible with the async Mongo repo.
-- tests/kurisu.test.js and tests/helpers.js not yet converted to async Mongo/mongodb-memory-server; migration smoke/additional required tests not yet added.
-- README.md and bot.txt not yet updated to reflect MongoDB Atlas setup, migration/rollback steps, and corrected §12/test/version status.
-- Verification (node --check, grep for unawaited repo/perms calls, node --test, migration dry-run/count checks) not yet completed in this environment.
+DO NOT COMMIT
+  - .env, tokens, DATABASE_URL, MongoDB data files, SQLite files, the local zip.

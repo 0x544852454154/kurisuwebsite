@@ -2,49 +2,54 @@
 KURISU SECURITY - BOT HANDOFF / CONTEXT FOR THE NEXT BOT
 ================================================================================
 
-Last updated : 2026-11-13
+Last updated : 2026-11-15
 Repository   : https://github.com/eunsoulja/KurisuDevelopment.git
 Branch       : main
-Latest feature commit: d2f8f8f - "Avoid redundant nuke recent reads during a burst"
-Version      : 1.2.0
-Stack        : Node.js 22+, discord.js 14, better-sqlite3, dotenv, SQLite
-Database     : SQLite now; MongoDB Atlas migration planned (see section 9.0)
-UI           : Discord Components V2 (NOT classic embeds)
+Version      : 2.1.0
+Stack        : Node.js 22+, discord.js 14, MongoDB (official driver), dotenv
+Database     : MongoDB via DATABASE_URL (already migrated; SQLite is legacy only)
+UI           : Discord Components V2 (never classic embeds)
+Tests        : 37 automated tests, all passing
 
 Read this file before changing anything. Also read:
   - README.md
-  - tests/kurisu.test.js
+  - tests/kurisu.test.js and tests/helpers.js
   - src/components/common/ui.js
   - src/components/dashboard/index.js
+  - src/config/emojis.js
 
-Do not commit .env, tokens, database connection strings, the SQLite file, or
-the local zip file. The MongoDB URI is a secret.
+Do not commit .env, tokens, database connection strings, MongoDB data files, the
+SQLite file, or the local zip. DATABASE_URL is a secret and must never be logged.
 
 
 ================================================================================
 1. WHAT THE BOT IS
 ================================================================================
 
-Kurisu is a Discord antinuke, raid-protection and moderation bot.
+Kurisu is a Discord antinuke, raid-protection, ticket and moderation bot.
 
 Main areas:
   - Antinuke with 28 configurable modules.
   - Nuke Guard: cross-module destructive-burst detection.
-  - 24-hour nuke watch: a kicked nuke executor is banned on sight.
+  - 24-hour nuke watch: a banned/kicked nuke executor is banned on sight.
   - Raid protection with levels, lockdown, verification mode and join history.
   - Whitelist for users AND roles, with per-module scopes.
   - Moderation commands and case/warning history.
-  - Recovery: restore channels/roles, remove webhooks/bots/invites, revert danger.
+  - Recovery: restore channels/roles, contain added bots, remove webhooks/
+    invites, revert dangerous changes.
+  - Verification panel with a public stable button.
+  - Private support tickets with staff tools and optional log-only transcripts.
+  - Cosmetic premium guild-member profiles (security is never gated).
   - Security Center (/security) and Command Center (/help), both Components V2.
   - Bot-network overview (/guilds), bot-owner only.
   - Prefix text commands using the same permission and V2 response pipeline.
 
 Current scale:
-  - 39 top-level slash commands.
-  - 24 subcommands.
-  - 54 help entries (top-level commands + subcommands).
+  - 42 top-level slash commands.
+  - 71 help entries (top-level commands + subcommands).
   - 28 antinuke modules.
-  - 50 automated tests, all passing.
+  - 37 automated tests, all passing.
+  - Version 2.1.0.
 
 
 ================================================================================
@@ -58,378 +63,160 @@ Environment variables (.env):
   DISCORD_TOKEN   Bot token. Never commit it.
   CLIENT_ID       Discord application ID.
   DEV_GUILD_ID    Optional. Registers commands to one guild instantly.
-  OWNER_IDS       Comma-separated bot-owner user IDs.
-                  Required for /guilds and for owner-only actions.
-  DATABASE_URL    MongoDB Atlas connection string for the planned migration.
-                  Put the real URI in .env only. Never write it into bot.txt,
-                  README, source, logs or git. The provided URI uses the
-                  Atlas database name "prismo".
-  DATABASE_PATH   Current SQLite path. Default: ./data/kurisu.db
-                  This remains active until the MongoDB migration is done.
-  AUTO_DEPLOY     true = register slash commands on every startup.
-  LOG_LEVEL       debug | info | warn | error
+  OWNER_IDS       Comma-separated bot owner user IDs. Always exempt, can edit
+                  the whitelist, and are the only users allowed to run /guilds,
+                  /premium and the owner-only security settings.
+  DATABASE_URL    MongoDB connection string. Never commit or log it.
+  DATABASE_NAME   Optional MongoDB database override. Defaults to the URI path,
+                  then "prismo".
+  DATABASE_PATH   SQLite file used only by scripts/migrate-sqlite-to-mongo.js.
+  AUTO_DEPLOY     true = register commands on startup. Default false.
+  LOG_LEVEL       debug | info | warn | error.
 
-Run:
-  npm run deploy      Register slash commands.
-  npm start           Start the bot.
-  AUTO_DEPLOY=true npm start   Deploy commands automatically on boot.
+Startup:
+  node index.js            (loads src/index.js)
+  npm run deploy           (register slash commands)
+  npm start                (production)
 
-Tests:
-  node --test tests/kurisu.test.js
-
-  Current expected result: 50 of 50 passing.
-  "npm test" may fail in this PowerShell environment because npm.ps1 is
-  blocked by execution policy. Use the node command above instead.
-
-Privileged intents required in the Discord Developer Portal:
-  - Server Members Intent  (GuildMembers)
-  - Message Content Intent  (MessageContent, needed for prefix text commands)
-
-Gateway intents used in code:
-  Guilds, GuildMembers, GuildModeration, GuildMessages, MessageContent,
-  GuildVoiceStates
-
-  GuildPresences is intentionally NOT requested. /guilds uses Discord's REST
-  approximate presence count instead.
-
-Bot permissions integer used by the README: 1100451490998
-Recommended role position: near the top of the role list. Discord role
-hierarchy decides whether Kurisu can punish, strip roles or restore anything.
+The database must be reachable before login. src/database/index.js connects,
+pings, creates indexes, then runs one-time data migrations. Startup errors scrub
+MongoDB credentials from the message.
 
 
 ================================================================================
-3. THEME AND UI RULES - STRICT
+3. COMMAND MAP
 ================================================================================
 
-Kurisu uses Discord Components V2, not classic embeds.
+3.1 SECURITY / ANTINUKE
+  /security                 Interactive Security Center dashboard.
+  /antinuke status|enable|disable
+  /incidents [page]         Browse security incidents.
+  /watchlist list|add|remove
+  /raid status|lockdown|unlock
+  /quarantine release
+  /verification panel <channel> [role]
+  /verification config
+  /verification remove
+  /verification enable|disable|status   (legacy verification mode)
 
-Hard rules:
-  - No EmbedBuilder.
-  - No embed colors, accent colors, side bars or brand-color strips.
-  - No ButtonStyle.Primary, Success or Danger.
-  - All buttons must be grey/secondary, created through ui.btn() or ui.emojiBtn().
-  - The only color in the UI is the red custom emoji set.
-  - Use the emoji registry in src/config/emojis.js through E / ui.E.
-  - Do not invent emoji IDs. Do not use unrelated colored emojis.
-  - Use the shared helpers in src/components/common/ui.js:
-        ui.text / ui.sep / ui.btn / ui.emojiBtn / ui.buttons / ui.select
-        ui.userSelect / ui.roleSelect / ui.channelSelect
-        ui.container / ui.message / ui.edit / ui.notice / ui.error / ui.respond
-  - Use ui.message() for replies and ui.edit() for updates.
-  - Ephemeral for personal/sensitive views; public only for shared panels.
-  - Re-authorize every component interaction. Do not trust the customId.
+3.2 VERIFICATION PANEL
+  /verification panel channel:#verify [role:@Verified]
+    - Posts a public Components V2 panel with button customId "kv:verify".
+    - If no role is supplied, creates a permissionless "Verified" role.
+    - Validates the role: not @everyone, not managed, no dangerous permissions,
+      below Kurisu's highest role, and Manage Roles is present.
+    - Re-posting replaces the old panel message and stores the new channel/id.
+  /verification config
+    - Shows panel state, role, verified-member count, account-age gate.
+  /verification remove
+    - Deletes the panel message and disables verification.
 
-Current visual language:
-  - Header:        ### <emoji> TITLE
-  - Subheader:     -# short subtitle
-  - Divider:       'sep'
-  - Spacing only:  'sep:blank'
-  - Label/value:   Label  **Value**
-  - Group headings with bold text, then separated blocks.
-  - Relative timestamps: <t:UNIX:R>
-  - Compact footers with -#.
-  - Section rows may use a thumbnail or a single button accessory.
+  Click flow:
+    - customId is exactly "kv:verify"; every decision is re-read from MongoDB.
+    - Wrong/inactive panel channel is rejected.
+    - Already-verified members get an ephemeral notice before the cooldown check.
+    - 5-second per-member cooldown (LIMITS.verifyCooldownMs).
+    - Raid lockdown pauses verification.
+    - Minimum account age comes from raid_config.min_account_age_days.
+    - Grants the configured role and writes a "member" log entry.
 
-Current clean-layout patterns (keep these):
-  - Security Center main: status block, overview, nuke guard, last incident.
-  - Protection Modules: 10 modules per page, one select for that page, page nav.
-  - Settings: Protection, Escalation/Prefix, Log Channels.
-  - Raid: Status, Join Thresholds, Accounts; config row then action row.
-  - Logs/Incidents: action on line 1, metadata on line 2.
-  - Whitelist: Grant level, Scope preset, Add or update, Custom Modules, Remove.
-  - Custom scopes: 10 modules per page, one select, Save / Cancel / nav.
-  - Diagnostics: one status line per check, red dot = fix, clock = check.
-  - /guilds: network totals, per-server lines, grey pagination + Refresh.
+3.3 TICKETS
+  /ticket panel channel:#support
+  /ticket setup [category:#tickets] [log_channel:#ticket-logs]
+                [staff_role:@Staff] [max_open:3] [transcripts:false]
+  /ticket close [ticket:12]
+  /ticket add user:@member
+  /ticket remove user:@member
+  /ticket claim
+  /ticket list [page:1]
 
-Important wording: the user says "embed" colloquially. Kurisu cards are
-Components V2 containers. Do not switch them to classic Discord embeds.
+  Custom IDs:
+    kt:new:panel
+    kt:close:<ticketNumber>
+    kt:closeok:<ticketNumber>
+    kt:cancel:<ticketNumber>
+    kt:claim:<ticketNumber>
+
+  Behaviour:
+    - Ticket channels are private: @everyone denied View Channel; owner, staff
+      role and bot receive explicit overwrites.
+    - Ticket numbers come from an atomic per-guild counter.
+    - max_open defaults to 3 and is enforced before channel creation.
+    - Close requires confirmation; the ticket channel is removed after
+      LIMITS.ticketDeleteDelayMs (10 seconds).
+    - Transcripts are off by default. When enabled, a text transcript is sent
+      only to the configured ticket log channel and is never persisted.
+    - ticket_config and tickets are MongoDB collections with indexes.
+    - Ticket channels are excluded from antinuke snapshots, automatic
+      restoration and raid lockdown.
+    - A manually deleted ticket channel cannot be recovered. The panel/setup
+      views state this explicitly.
+
+3.4 PREMIUM / PROFILE
+  /premium enable [guild_id] [days]
+  /premium disable [guild_id]
+  /premium list [page]
+    - Bot owner only. /premium list is global and works outside a guild.
+    - Premium rows have expires_at; expiry is enforced lazily by getPremium()
+      and by an hourly/startup sweep.
+    - Expiry removes the row and resets the cosmetic guild-member profile.
+    - Premium never gates security, antinuke, raid or ticket features.
+
+  /botprofile avatar|banner|reset|view
+    - Premium guilds only; server owner / bot owner / Trusted Administrator.
+    - Uses guild.members.editMe(), i.e. a guild-member profile, never the
+      global bot avatar.
+    - Accepts PNG, JPEG, GIF or WebP up to 8 MB; magic bytes are checked.
+    - Stores only { avatar: 0|1, banner: 0|1 } flags in bot_profiles.
+    - "view" is read-only and ephemeral.
+
+3.5 MODERATION
+  /ban /unban /kick /timeout /untimeout /warn /warnings /purge /clear
+  /slowmode /lock /unlock /hide /unhide /nickname
+  /role add|remove /softban /massban /masskick
+  /case view|user /banlist
+
+3.6 CONFIGURATION / UTILITY
+  /logs set|clear|view
+  /prefix [prefix]
+  /whitelist add|remove|list
+  /help
+  /ping /serverinfo /userinfo /about /invite /dev
+  /guilds                   Bot owner only; paginated with a Refresh button.
+
+Every top-level command is loaded by src/commands/index.js. New command files
+must export a `category`, `data` SlashCommandBuilder and an async `execute`.
+Files beginning with "_" are skipped.
 
 
 ================================================================================
-4. COMMAND INVENTORY
+4. UI RULES
 ================================================================================
 
-All slash commands also work as text commands with the server prefix.
-Default prefix is "!" (database default), configurable with /prefix.
-See section 4.8; prefix examples and the Command Center are now consistent.
-
-Categories below match the /help categories.
-
-
---------------------------------------------------------------------------------
-4.1 SECURITY (5 commands)
---------------------------------------------------------------------------------
-
-/security
-  Open the Kurisu Security Center.
-  Permission: Server Owner or Trusted Administrator.
-  Pages: main, protection modules, whitelist, security logs, settings, raid.
-
-/antinuke status
-  Show antinuke status, module count, Nuke Guard and nuke watch.
-/antinuke enable
-  Enable antinuke.
-/antinuke disable
-  Disable antinuke. Server owner only.
-  Permission: Server Owner or Trusted Administrator.
-
-/incidents [page]
-  Browse the security incident log.
-  Permission: Server Owner or Trusted Administrator.
-
-/watchlist list
-  Show watched executors.
-/watchlist add <user> [reason]
-  Add a user to the nuke watch list. Server owner only.
-/watchlist remove <user>
-  Remove a user from the nuke watch list.
-  Permission: Server Owner or Trusted Administrator.
-
-/quarantine release <user>
-  Restore a quarantined or stripped member.
-  Permission: Server Owner or Trusted Administrator.
-
-
---------------------------------------------------------------------------------
-4.2 RAID PROTECTION (1 command)
---------------------------------------------------------------------------------
-
-/raid status
-  Show the current raid level and lockdown state.
-/raid lockdown [minutes]
-  Lock the server down now.
-/raid unlock
-  End a lockdown and restore channels.
-  Permission: Server Owner or Trusted Administrator.
-
-
---------------------------------------------------------------------------------
-4.3 VERIFICATION (1 command)
---------------------------------------------------------------------------------
-
-/verification enable
-  Raise the server verification level.
-/verification disable
-  Restore the previous verification level.
-/verification status
-  Show verification mode status.
-  Permission: Server Owner or Trusted Administrator.
-
-
---------------------------------------------------------------------------------
-4.4 MODERATION (21 commands)
---------------------------------------------------------------------------------
-
-/ban <user> [reason] [delete_days:0-7]
-  Ban a member. Permission: Ban Members.
-
-/banlist [page] [user]
-  List banned users or check one ban. Permission: Ban Members.
-
-/case view <case>
-  Show one moderation case.
-/case user <user> [page]
-  Show a member's case history.
-  Permission: Moderate Members.
-
-/clear [amount:1-50]
-  Clear bot messages from this channel. Permission: Manage Messages.
-
-/hide [channel] [reason]
-  Hide a channel from @everyone. Permission: Manage Channels.
-
-/kick <user> [reason]
-  Remove a member. Permission: Kick Members.
-
-/lock [channel] [reason]
-  Lock a channel for @everyone. Permission: Manage Channels.
-
-/massban <ids> [reason]
-  Ban up to 25 users by ID, with confirmation.
-  Permission: Ban Members.
-  Extra requirement: the invoker must be whitelisted for the massBan module.
-  Otherwise the command refuses, so staff cannot trip their own antinuke.
-
-/masskick <ids> [reason]
-  Kick up to 25 members by ID, with confirmation.
-  Permission: Kick Members.
-  Extra requirement: the invoker must be whitelisted for the massKick module.
-
-/nickname <user> [nickname]
-  Change or reset a member's nickname. Permission: Manage Nicknames.
-
-/purge <amount:1-100> [user] [filter:All|Bots|Links|Attachments]
-  Delete messages in bulk. Permission: Manage Messages.
-
-/role add <user> <role> [reason]
-  Give a role to a member.
-/role remove <user> <role> [reason]
-  Take a role from a member.
-  Permission: Manage Roles.
-
-/slowmode <seconds> [channel]
-  Set slowmode. 0 disables it; maximum is 21600 seconds.
-  Permission: Manage Channels.
-
-/softban <user> [reason]
-  Ban and immediately unban to delete recent messages. Permission: Ban Members.
-
-/timeout <user> <duration> [reason]
-  Temporarily restrict a member. Duration examples: 30m, 2h, 1d.
-  Maximum 28 days. Permission: Moderate Members.
-
-/unban <user_id> [reason]
-  Remove a ban. Permission: Ban Members.
-
-/unhide [channel] [reason]
-  Make a hidden channel visible. Permission: Manage Channels.
-
-/unlock [channel] [reason]
-  Unlock a channel. Permission: Manage Channels.
-
-/untimeout <user> [reason]
-  Remove a member's timeout. Permission: Moderate Members.
-
-/warn <user> <reason>
-  Issue a moderation warning. Permission: Moderate Members.
-
-/warnings <user>
-  View warning history. Permission: Moderate Members.
-
-
---------------------------------------------------------------------------------
-4.5 CONFIGURATION (2 commands)
---------------------------------------------------------------------------------
-
-/logs set <type> <channel>
-  Set the channel for a log type.
-/logs clear <type>
-  Stop logging a type.
-/logs view
-  Show configured log channels.
-  Permission: Server Owner or Trusted Administrator.
-
-  Log types:
-    antinuke, raid, moderation, member, message, channel, role, voice, config
-
-/prefix [prefix]
-  Set the text command prefix for this server.
-  1-5 characters, no spaces or slashes. Omit to view the current prefix.
-  Permission: Server Owner or Trusted Administrator.
-
-
---------------------------------------------------------------------------------
-4.6 ADMINISTRATION (1 command)
---------------------------------------------------------------------------------
-
-/whitelist add <level> [user] [role] [scopes]
-  Add or update a trusted user or role.
-/whitelist remove [user] [role]
-  Remove a trusted user or role.
-/whitelist list
-  List trusted users and roles.
-/whitelist check <user>
-  Check a user's exemption status.
-  Permission: Server Owner or Trusted Administrator.
-
-  Whitelist levels:
-    trusted_admin  Trusted Administrator
-    trusted_mod    Trusted Moderator
-    bypass         Security Bypass
-    bot            Trusted Bot
-
-  Authority:
-    - Guild owner and bot owners can grant any level.
-    - Trusted Administrators may only grant trusted_mod and bot.
-    - Owner protections cannot be removed.
-    - Administrator permission alone gives no antinuke immunity and no
-      whitelist authority. A Trusted Administrator must also have a whitelist
-      entry with the trusted_admin level.
-
-  Scope presets accepted by /whitelist scopes:
-    default, all, pings, mentions, channels, channel-create, channel-rename,
-    channel-delete, roles, members, webhooks, server, invites, messages,
-    emojis, assets, threads, automod, bots, permissions, nuke
-
-  If scopes are omitted:
-    - trusted_mod bypasses message modules only (legacy default).
-    - trusted_admin, bypass and bot are fully exempt.
-  Scoped entries only bypass the listed modules. '*' means all modules.
-
-
---------------------------------------------------------------------------------
-4.7 UTILITY (8 commands)
---------------------------------------------------------------------------------
-
-/about
-  Information about Kurisu.
-
-/help [category] [command] [visible]
-  Open the Kurisu Command Center.
-  Categories: Security, Raid Protection, Moderation, Configuration,
-  Administration, Verification, Utility.
-  "visible" shows the menu to everyone; default is ephemeral.
-
-/ping
-  Check Kurisu's latency.
-
-/invite
-  Get the link to add Kurisu to a server.
-
-/serverinfo
-  Show information about this server.
-
-/userinfo [user]
-  Show account, role and security details. Default: yourself.
-
-/dev
-  Show the Kurisu developer team. No options. Public, no permission checks, no database access.
-
-/guilds [page]
-  Bot owner only. Every server the bot is in, with member and approximate
-  active-user counts, plus totals. Ephemeral. 8 servers per page.
-  Requires OWNER_IDS to be set. Has a grey Refresh button that forces a fresh
-  REST snapshot while preserving the current page.
-
-
---------------------------------------------------------------------------------
-4.8 TEXT COMMANDS / PREFIX
---------------------------------------------------------------------------------
-
-Every top-level slash command is also available as a text command:
-
-  <prefix><command> [arguments]
-
-  Default prefix: !
-  Examples (with default prefix):
-    !help
-    !ping
-    !serverinfo
-    !ban @member spam
-    !timeout @member 10m spam
-    !whitelist add @member trusted_mod pings
-
-  The prefix is matched case-insensitively and does not need a space.
-  Change it with /prefix or <prefix>prefix.
-
-  Arguments are typed:
-    - user mentions, raw user IDs
-    - #channel mentions
-    - @role mentions
-    - numbers
-    - choice values
-    - quoted strings
-    - named options such as reason:"spam and eggs" or reason=spam
-
-  Text commands use the same permission, hierarchy and antinuke checks as
-  slash commands, and reply with the same Components V2 views.
-
-PREFIX DOCS (RESOLVED IN 1.1.1):
-  README examples and comments now use the default "!" (or <prefix>), and
-  /help shows both the slash form and the current server's prefix form.
-  The automated test still sets the prefix to "k" before testing custom-prefix
-  text commands, which proves prefixes are not hard-coded. Do not tell users
-  "khelp works by default"; the default is "!".
+  - Components V2 only. No MessageEmbed, no `embeds:` payloads, no raw embeds.
+  - One Container (type 17), optional TextDisplay, Separator, Section,
+    Thumbnail, MediaGallery and ActionRow components.
+  - Buttons are ButtonStyle.Secondary (grey) only. Never Primary, Success,
+    Danger or Link except where a true link button is explicitly required.
+  - No accent_color / accentColor anywhere.
+  - No Unicode emoji in source or user-facing text. Use registry keys through
+    ui.E / ui.btn / ui.notice.
+  - Every interactive view re-checks permissions and database state on each
+    interaction. Never trust customId contents for authorization.
+  - Personal actions are ephemeral; shared panels are public.
+  - ui.message() sets IsComponentsV2; ui.edit() omits the ephemeral flag.
+  - The colour language is red custom emojis on a colourless layout.
+
+Emoji registry:
+  - src/config/emojis.js maps keys to exact <:name:id> or <a:name:id> values.
+  - parseEmoji validates syntax.
+  - validateEmojis() runs on ClientReady and reports unparseable, invisible or
+    name-mismatched entries.
+  - `ticket` is currently null as an explicit TODO. Upload a red ticket emoji,
+    replace null with its exact syntax, and startup validation will stop
+    reporting it. Until then ticket UI falls back to the `staff` icon.
+  - Never invent an emoji ID and never substitute a Unicode emoji for a missing
+    custom one.
 
 
 ================================================================================
@@ -440,15 +227,9 @@ Actors:
   - Guild owner: always exempt; cannot be punished.
   - Bot owners (OWNER_IDS): always exempt; cannot be punished.
   - Kurisu itself: always exempt.
-  - Whitelist users/roles: exempt according to level and scopes.
-  - Administrator permission alone: NOT exempt.
-
-Punishments:
-  strip, quarantine, timeout, kick, ban
-
-Escalation:
-  Default 2 incidents in 24 hours -> escalate to ban.
-  Configurable; 0 disables escalation.
+  - Whitelisted users/roles: exempt according to level and scopes.
+  - Administrator permission alone: NOT exempt. A Trusted Administrator also
+    needs a trusted_admin whitelist entry.
 
 28 antinuke modules:
   channelCreate, channelDelete, channelUpdate,
@@ -461,649 +242,407 @@ Escalation:
   emojiDelete, stickerDelete, threadDelete, assetCreate,
   automodRule, vanityChange, nukeGuard
 
-Critical defaults (faster kicks):
-  channelDelete    2 actions / 10s  -> kick
-  roleDelete       2 actions / 10s  -> kick
-  botAdd           1 action  / 60s  -> kick
-  permEscalation   1 action  / 60s  -> kick
-  automodRule      1 action  / 30s  -> kick
-  vanityChange     1 action  / 60s  -> kick
-  prune            1 action  / 60s  -> kick
+Hardened critical defaults (2.1.0):
+  channelDelete    2 actions / 5s   -> ban
+  roleDelete       2 actions / 5s   -> ban
+  botAdd           1 action  / 60s  -> ban
+  permEscalation   1 action  / 60s  -> ban
+  automodRule      1 action  / 30s  -> ban
+  vanityChange     1 action  / 60s  -> ban
+  prune            1 action  / 60s  -> ban
+  webhookDelete    3 actions / 20s  -> ban
+  nukeGuard        3 actions / 10s  -> ban
   massBan          3 actions / 15s  -> ban
   massKick         3 actions / 15s  -> ban
-  massUnban        3 actions / 15s  -> kick
-  nukeGuard        3 actions / 10s  -> kick
+  massUnban        3 actions / 15s  -> ban
+
+Punishment fallback:
+  ban -> kick -> quarantine -> strip dangerous roles -> timeout
+  A ban requires no member fetch. If Discord refuses, each fallback is tried
+  in order until one succeeds. A failed response releases the executor lock so
+  a later action can retry.
+
+Detection pipeline (hot path):
+  1. GUILD_AUDIT_LOG_ENTRY_CREATE arrives with executor/target/changes.
+  2. Duplicate audit entry IDs are dropped.
+  3. Entries with no executor are ignored.
+  4. Guild settings/modules/whitelist/watches/incident counts come from warm
+     in-memory caches filled by repo.warmGuild().
+  5. The action is classified into one or more modules.
+  6. Exempt actors are skipped; Administrator alone is not exempt.
+  7. Nuke Guard is evaluated across modules before per-module thresholds.
+  8. The punishment call starts immediately. A ban is issued before mitigation
+     and before any awaited persistence.
+  9. Mitigation runs concurrently with the punishment: channel/role restores
+     first, at most 3 tasks at once (RESTORE_CONCURRENCY = 3).
+ 10. Per-executor lock + already-punished set prevent double punishment. While
+     locked, later actions are mitigated but not punished again.
+ 11. A durable 24h nuke watch is written after a ban or kick and is kept even
+     while the executor is banned. A rejoin/action by a watched user bans them.
+ 12. Incident row + antinuke log line are written.
+
+Bot-add containment:
+  - The executor is banned first (botAdd default = ban).
+  - The added bot is banned unless it has an explicit `bot` whitelist entry.
+  - If the bot ban is refused: kick, then strip dangerous roles.
+  - Integrations owned by the bot or executor are removed when available.
+  - Invites created by the executor are deleted.
+  - Trusted bots are skipped entirely.
+
+Settings migration:
+  - src/database/migrations.js removes only rows that exactly match the old
+    shipped defaults for the hardened modules. Custom thresholds/windows/
+    punishments/enabled flags survive.
+  - Idempotent through the schema_migrations collection.
+  - Adds compromised_guard: 0 to existing guild_settings rows without
+    overwriting a value.
+
+Compromised-account guard:
+  - Default OFF, owner-only dashboard toggle.
+  - When ON, whitelisted accounts younger than 7 days lose their whitelist
+    exemption (LIMITS.compromisedMaxAgeMs).
+  - Guild owners, bot owners and Kurisu remain protected.
+  - Intended for freshly compromised throwaway staff accounts.
 
 Nuke Guard:
-  - Runs before per-module thresholds.
-  - Counts destructive actions across all enabled "nuke" modules per executor.
-  - At 3 destructive actions in 10 seconds (default), it kicks immediately.
-  - This stops mixed attacks (channel delete + role delete + ban wave) that
-    might otherwise stay under each individual threshold.
-  - A kicked nuke executor is added to the persistent 24-hour nuke watch.
-  - Any auditable action, message or rejoin while watched results in a ban.
-  - The watch survives restarts because it is stored in the nuke_watch table.
-  - The recent cross-module burst window is mirrored in nuke_recent, so a
-    burst split across a restart is still caught.
-  - Incidents label every module key involved in a mixed burst, not just the
-    first one.
+  - Counts destructive actions across modules per executor.
+  - Mixed bursts cannot stay below every individual threshold.
+  - Burst state is mirrored to nuke_recent; memory is authoritative and the
+    durable write is not awaited on the hot path.
+  - Persisted rows are loaded once per guild at startup/GuildCreate.
 
-Early alert:
-  - The first hit on a destructive module, while still below threshold,
-    writes a "Security Watch" line to the antinuke log.
+Watch:
+  - nuke_watch has a TTL index on expires_at_date.
+  - The watch is re-created/refreshed to 24h when a watched executor acts.
+  - It is not removed just because the executor is banned, so an unban cannot
+    restore access silently.
 
-Detection pipeline:
-  - Source: GUILD_AUDIT_LOG_ENTRY_CREATE.
-  - Duplicate audit entry IDs are dropped.
-  - Entries with no executor are ignored; Kurisu never punishes an arbitrary
-    member.
-  - Entry is mapped to one or more modules.
-  - Owner-class, Kurisu and whitelisted actors are skipped.
-  - Nuke Guard is evaluated first.
-  - Then the per-module sliding window and per-executor lock.
-  - Punishment is applied with a fallback chain if Discord refuses.
-  - Affected objects are mitigated (restore, revert or remove).
-  - An incident row and a log line are written.
-
-Whitelist specifics:
-  - Trusted Administrator requires Administrator permission PLUS a
-    trusted_admin whitelist entry.
-  - Role whitelist entries are supported.
-  - Scoped entries only bypass listed modules.
-  - Owner protections cannot be removed.
-  - Trusted Administrators can only grant trusted_mod and bot levels.
-  - Disabling antinuke or raid protection requires server owner or bot owner.
-  - /massban and /masskick require a whitelist exemption for their module.
-
-Raid protection:
-  - Levels: NORMAL, ELEVATED, HIGH, LOCKDOWN.
-  - Defaults: 5 joins = ELEVATED, 10 = HIGH, 20 = LOCKDOWN in a 10s window.
-  - New-account age default: 7 days.
-  - Auto lockdown default: on, 15 minutes.
-  - Kick suspicious accounts during lockdown: off by default.
-  - HIGH raises Discord verification level.
-  - LOCKDOWN sets Very High verification, blocks @everyone send permissions,
-    and pauses invites.
-  - Raid protection never mass-bans. Optional lockdown kicks only remove
-    accounts younger than the configured minimum age.
-  - Lockdown state and channel state are stored in SQLite; expired lockdowns
-    are resolved on startup.
-
-Recovery:
-  - Snapshots of channels/roles/settings.
-  - Restore channels and roles (new Discord IDs).
-  - Revert role/channel/server-name changes.
-  - Remove webhooks, unapproved bots and invites.
-  - Restored overwrites never regain dangerous permissions.
-
-Discord API limits:
-  - Messages in a deleted channel cannot be recovered.
-  - Restored channels/roles get new IDs.
-  - Members of a deleted role are not re-assigned.
-  - Server icon, banner and vanity URL cannot be restored.
-  - Bulk message deletion is detected through audit entries, not a perfect
-    per-message count.
-  - Quarantine uses removed roles, a permissionless role and a 28-day timeout
-    because Discord caps timeouts.
-  - Message logs intentionally omit message content.
+Message modules:
+  - everyoneMention and massMention run from messageCreate.
+  - Nuke watch is checked there too.
+  - Offending messages are deleted and deleted-message notes are recorded.
 
 
 ================================================================================
-6. ARCHITECTURE / FILE MAP
+6. PERMISSIONS / AUTHORIZATION
 ================================================================================
 
-Entry:
-  index.js                  Thin root entry.
-  src/index.js              Client, intents, login, shutdown, startup checks.
+  - isExempt / isExemptSync: guild owner, bot owner, Kurisu, whitelist levels
+    and scopes. Administrator alone is not enough.
+  - isExemptSync is the zero-I/O hot-path variant and reads warm caches only.
+  - isTrustedAdmin: Administrator permission PLUS trusted_admin whitelist
+    entry.
+  - canManageSecurity: owner class or Trusted Administrator.
+  - canGrantLevel: owner class can grant anything; Trusted Administrators may
+    only grant trusted_mod and bot.
+  - canRemoveEntry: owner protections cannot be removed.
+  - isTrustedBot: explicit `bot` whitelist entry (or owner class).
+  - accountTooNew: optional compromised guard, default off.
+  - checkTarget: rejects self, Kurisu, guild owner, equal/higher roles and
+    roles above Kurisu.
+  - rolePosition/botMissing: hierarchy and permission diagnostics.
 
-Commands:
-  src/commands/index.js     Auto-loader. Skips files starting with "_".
-  src/commands/_util.js     guard/fail helpers and command utilities.
-  src/commands/security/    security, antinuke, incidents, watchlist, raid,
-                            quarantine, verification.
-  src/commands/moderation/  ban, kick, timeout, purge, role, massban, etc.
-  src/commands/configuration/ logs, prefix.
-  src/commands/administration/ whitelist.
-  src/commands/utility/     help, guilds, about, dev, invite, ping, userinfo,
-                            serverinfo.
+Whitelist scopes:
+  - Stored as JSON array of module keys, ["*"] for all, or null for the level
+    default.
+  - Presets: pings/mentions, channels, channel-create, channel-rename,
+    channel-delete, roles, members, webhooks, server, invites, messages,
+    emojis, assets, threads, automod, bots, permissions, nuke.
+  - Role entries are checked against member.roles.cache.
+  - Entry scopes are ignored when no moduleKey is supplied (raid checks), so
+    only fully exempt entries pass those checks.
 
-Text commands:
-  src/text/index.js         Prefix cache, tokenizer, typed option parser,
-                            usage generation, V2 reply pipeline.
-
-Events:
-  src/events/core.js        ready, interaction routing, audit log entries,
-                            messageCreate, guildMemberAdd.
-  src/events/guildlogs.js   member/message/channel/role/voice logs.
-
-Routing prefixes:
-  kh: help
-  ks: security dashboard
-  kc: confirmation
-  kw: warnings
-  ki: invite
-  kn: incidents
-  kb: banlist
-  kg: guilds
-  (dashboard diagnostics reuses ks: with route ks:v:diag)
-
-UI:
-  src/components/common/ui.js       All Components V2 primitives.
-  src/components/common/confirm.js  Confirmation flow.
-  src/components/common/about.js    About card.
-  src/components/common/invite.js   Invite card.
-  src/components/dashboard/index.js Security Center pages and handlers.
-  src/components/dashboard/diagnostics.js Setup checks (ks:v:diag).
-  src/components/help/index.js      Command Center generated from real command
-                                    definitions.
-  src/config/branding.js            Branding media.
-  src/config/emojis.js              Emoji registry and startup validation.
-
-Engines:
-  src/engines/antinuke/index.js     Audit pipeline, Nuke Guard, nuke watch,
-                                    mitigation, message modules.
-  src/engines/antinuke/modules.js   28 module definitions and defaults.
-  src/engines/antinuke/punish.js    Punishment fallback chain.
-  src/engines/raid/index.js         Join velocity, levels, lockdown,
-                                    verification.
-  src/engines/recovery/index.js     Snapshot restore and cleanup.
-  src/engines/logging.js            Log channel routing and incident logs.
-  src/engines/moderation/index.js   Cases, warnings, moderation actions.
-
-Permissions:
-  src/permissions/index.js  Owner class, Trusted Administrator, whitelist
-                            authority, exemption checks, hierarchy checks.
-
-Config:
-  src/config/settings.js    Punishments, dangerous permissions, whitelist
-                            levels, log types, limits.
-  src/config/whitelist.js   Scope presets, masks and labels.
-  src/config/emojis.js      Red custom emoji registry.
-  src/config/developers.js  Developer team display data (owner, moderators).
-  src/config/branding.js    Branding URLs.
-
-Database (current SQLite; MongoDB migration planned):
-  src/database/index.js     SQLite open/close, WAL, foreign keys, migrations.
-  src/database/repo.js      All prepared statements and config accessors.
-  Planned: replace with async MongoClient setup and async repository methods.
-  See section 9.0 for the migration plan.
-
-Tests:
-  tests/kurisu.test.js      50 tests: DB, permissions, antinuke, raid, text
-                            parser, commands, /guilds, help, V2 limits,
-                            dashboard and authorization, whitelist scopes,
-                            diagnostics, banlist/incidents, raid lockdown,
-                            verification, recovery.
-
-Scripts:
-  scripts/deploy-commands.js Slash-command registration.
+Dashboard authorization:
+  - Every component interaction calls canManageSecurity again.
+  - Administrator-only members are rejected; only owner class or
+    Trusted Administrators can open /security.
+  - Premium is displayed read-only in Security Center.
+  - The compromised-account guard toggle is owner-only.
+  - Security navigation remains grey/secondary.
 
 
 ================================================================================
-7. DATABASE / PERSISTENCE (CURRENT SQLITE -> PLANNED MONGODB)
+7. DATABASE / PERSISTENCE (MONGODB)
 ================================================================================
 
-CURRENT STATE: SQLite via better-sqlite3. The repository layer is synchronous.
-PLANNED STATE: MongoDB Atlas via the DATABASE_URL environment variable.
-Do not assume the migration is already done. See section 9.0 for the full plan.
+src/database/index.js:
+  - MongoClient connect, ping, ensureIndexes(), then migrations.run().
+  - Derives database name from the URI, DATABASE_NAME, then "prismo".
+  - Redacts credentials from startup errors.
+  - Exposes open(), get(), close(), ping(), info(), ensureIndexes().
 
-SQLite via better-sqlite3, WAL mode and foreign keys enabled.
-Migrations run at startup and are tracked in schema_migrations.
+Repository:
+  - src/database/repo.js is async. Every caller must await.
+  - Snowflakes remain strings; timestamps remain epoch milliseconds.
+  - ObjectIds are never exposed to UI logic.
+  - Atomic counters through counters.findOneAndUpdate($inc).
+  - Warm caches for hot reads: guild settings, raid config, modules,
+    whitelist, log channels, nuke watch, 24h incident counts, premium and
+    verification. Writes invalidate/update the relevant cache.
+  - _dropCaches() exists for tests.
 
-Migrations:
-  1. initial schema
-  2. guild prefix (default '!')
-  3. whitelist roles and scopes
-  4. nuke_watch
-  5. nuke_recent (cross-module Nuke Guard burst window)
+Collections:
+  guild_settings, antinuke_modules, raid_config, lockdown_channels, whitelist,
+  warnings, mod_cases, incidents, log_channels, snapshots, recovery_log,
+  quarantine, join_history, nuke_watch, nuke_recent, counters, verification,
+  verification_users, ticket_config, tickets, premium, bot_profiles,
+  schema_migrations
 
-Tables:
-  guild_settings, antinuke_modules, raid_config, lockdown_channels,
-  whitelist, warnings, mod_cases, incidents, log_channels, snapshots,
-  recovery_log, quarantine, join_history, nuke_watch, nuke_recent
+Important indexes:
+  antinuke_modules  { guild_id, module } unique
+  whitelist         { guild_id, user_id } unique
+  log_channels      { guild_id, type } unique
+  snapshots         { guild_id, kind, target_id } unique
+  quarantine        { guild_id, user_id } unique
+  nuke_watch        { guild_id, user_id } unique
+  nuke_watch        { expires_at_date } TTL
+  nuke_recent       { guild_id, executor_id, entry_id } unique
+  nuke_recent       { created_at_date } TTL
+  verification      { guild_id } unique
+  verification_users{ guild_id, user_id } unique
+  ticket_config     { guild_id } unique
+  tickets           { guild_id, ticket_number } unique
+  tickets           { guild_id, channel_id } unique
+  tickets           { guild_id, state, created_at }
+  tickets           { guild_id, owner_id, state }
+  premium           { guild_id } unique
+  premium           { expires_at }
+  bot_profiles      { guild_id } unique
 
 Persists across restarts:
-  - guild config, antinuke module config, raid config
+  - guild config, module config, raid config
   - whitelist, warnings, moderation cases, incidents
   - log channels, snapshots, quarantine, join history
-  - lockdown state and nuke watch
-  - the recent cross-module actions used by Nuke Guard (2-minute prune;
-    the guard window itself is shorter, default 10 seconds)
+  - lockdown state, nuke watch, recent Nuke Guard burst window
+  - verification panels and verified-user records
+  - ticket config and ticket records
+  - premium rows and profile flags
 
-In-memory only (resets on restart):
+In-memory only:
   - antinuke sliding windows
   - audit-entry dedupe cache
-  - per-executor punishment locks
+  - per-executor punishment locks and already-punished set
   - early-watch alert dedupe
+  - verification click cooldown
 
-Back up the data/ directory before major changes.
-Do not commit data/kurisu.db.
-
-MongoDB target notes:
-  - Atlas database name from the current URI: prismo.
-  - Keep Discord snowflakes as strings.
-  - Keep timestamps as epoch milliseconds for drop-in compatibility.
-  - Preserve numeric case/incident/warning IDs with a counters collection.
-  - MongoDB TTL indexes only expire BSON Date values, not numeric epoch values.
-    Keep the numeric expires_at for compatibility and add a BSON Date field
-    (for example expires_at_date) for the TTL index, or convert expires_at to
-    a Date and adapt the repo. Still filter expired rows in code because the
-    TTL monitor is not immediate.
-  - Full collection mapping, indexes and rollout steps: section 9.0.
+TTL indexes are not immediate. Code still filters expiry when reading.
 
 
 ================================================================================
-8. CURRENT STATE / RECENT CHANGES
+8. FILE MAP
 ================================================================================
 
-Version 1.2.0.
+  index.js                      Entry point -> src/index.js
+  src/index.js                  Client, intents, events, shutdown
+  src/database/index.js         MongoDB open/indexes
+  src/database/repo.js          Async repository + warm caches
+  src/database/migrations.js    Data migrations (legacy defaults, guard column)
+  src/permissions/index.js      Exemption/authority/hierarchy checks
+  src/text/index.js             Prefix parsing and fake interaction adapter
+  src/commands/index.js         Command auto-loader
+  src/commands/security/        security, antinuke, incidents, watchlist, raid,
+                                quarantine, verification
+  src/commands/tickets/         ticket
+  src/commands/premium/         premium, botprofile
+  src/commands/moderation/      ban, kick, timeout, purge, role, massban, etc.
+  src/commands/configuration/   logs, prefix
+  src/commands/whitelist/       whitelist
+  src/commands/utility/         help, guilds, about, dev, invite, ping,
+                                userinfo, serverinfo
+  src/components/common/        ui, confirm, invite
+  src/components/dashboard/     Security Center
+  src/components/help/          Command Center
+  src/components/verification/  kv:verify panel and click flow
+  src/components/tickets/       kt:* panel, create, close, claim, transcript
+  src/engines/antinuke/         audit pipeline, Nuke Guard, watch, mitigation
+  src/engines/premium/          expiry sweep and profile reset
+  src/engines/raid/             join velocity, levels, lockdown, verification
+  src/engines/recovery/         snapshot/restore, bot/invite containment
+  src/engines/logging.js        Log channel routing
+  src/engines/moderation/       Cases, warnings, moderation actions
+  src/events/core.js            Event wiring, startup caches/sweeps, routes
+  src/events/guildlogs.js       Member/channel/role/voice logs
+  src/config/emojis.js          Emoji registry + validation
+  src/config/settings.js        Limits, log types, dangerous bits
+  src/config/whitelist.js       Scope presets, masks, labels
+  src/config/branding.js        Branding URLs
 
-Recent work:
-  - Added Nuke Guard, persistent 24h nuke watch and early security alerts.
-  - Added /antinuke status|enable|disable, /incidents, /watchlist,
-    /case, /banlist, /masskick, /userinfo.
-  - Added /guilds network overview.
-  - Added dashboard nuke stats and owner-only protection toggles.
-  - Split dashboard module selectors because Discord allows max 25 options.
-  - Redesigned /antinuke and /security views:
-      * main: status, overview, nuke guard, last incident
-      * protection: 10 modules per page, one page-scoped select
-      * settings: protection, escalation/prefix, log channels
-      * raid: status, thresholds, accounts
-      * logs/incidents: action line + metadata line
-      * whitelist: grant/scope/add/remove groups
-  - Added regression tests for protection pagination and antinuke status.
-  - 1.1.1: /guilds now acknowledges the component before refreshing and has a
-    grey Refresh button; previous/next keep the page.
-  - 1.1.1: Nuke Guard burst state persists in SQLite (migration 5) and mixed
-    bursts label every involved module. Live bursts use memory; persisted rows
-    are loaded only on startup, so detection does not add a read per action.
-  - 1.1.1: /help shows both slash and current-prefix examples.
-  - 1.1.1: settings log list shows configured channels plus one compact
-    "Not set" line.
-  - 1.1.1: README/comments standardized on the default "!" prefix, Node 22+,
-    OWNER_IDS for /guilds, and AUTO_DEPLOY default false.
-  - 1.2.0 (unreleased): whitelist scope redesign (P1 item 5).
-      * grant page: level select, ONE preset select (incl. "Custom modules…"),
-        then Add/Remove. The old two 25-option multi-selects are gone.
-      * custom page: 10 modules per page, explicit Save / Cancel / Prev / Next.
-      * state travels as <level>:<mask>[:<page>]; page 0 keeps the historical
-        two-argument form, so old customIds and links still work.
-      * a full-page selection is encoded as -(page+1) so "deselect everything on
-        this page" is unambiguous (Discord omits unselected options).
-      * scopeMask() rebuilds the submitted page from the payload only; earlier
-        code silently dropped modules the user never touched.
-  - 1.2.0 (unreleased): diagnostics view (P1 item 8).
-      * Security Center > Diagnostics, and Settings > Diagnostics.
-      * Checks: DB path, deploy mode, emoji registry, required permissions,
-        role position, audit-log access, antinuke/module count, log channels,
-        raid level/lockdown, whitelist, OWNER_IDS, privileged intents.
-      * Pure by default; dashboard.probe() verifies audit-log access over REST.
-  - 1.2.0 (unreleased): recovery.restoreChannel/restoreRole no longer report
-    "failed" when the best-effort re-snapshot of the restored object throws.
+Tests:
+  tests/kurisu.test.js          Async Mongo suite, mongodb-memory-server
+  tests/helpers.js              setup/resetDb/teardown/fakeGuild/walk
 
-Test status: 50/50 passing. New coverage: banlist, incidents, raid
-lockdown/unlock, raid and verification commands, recovery snapshot/restore and
-cleanup, whitelist scope redesign, diagnostics, and diagnostics authorization.
-
-Test harness notes:
-  - Shared mocks (dashInteraction, plainText, fakeMember, chatInput,
-    stagedScopes) live at the TOP of tests/kurisu.test.js: a const helper
-    declared after a test runs into the temporal dead zone.
-  - Never pass PermissionsBitField.All (a mutable constant) to the
-    PermissionsBitField constructor; convert with BigInt() first.
-  - DEFAULT string sort puts "__invites__" before "c1" (underscore < letters),
-    so lockdown assertions list it first.
-
-/guilds details:
-  - Owner-only via OWNER_IDS; ephemeral.
-  - 8 servers per page.
-  - Totals: servers, active users, members.
-  - Per server: name, member count, approximate active count, guild ID.
-  - Active count comes from REST approximate_presence_count. It is
-    approximate, not a unique-human activity metric.
-  - Data cached for 60 seconds; guild fetches use concurrency 4.
-  - No GuildPresences intent required.
-  - CustomIds: kg:<viewerId>:<page> for pagination and
-    kg:<viewerId>:r:<page> for a forced Refresh.
-  - component() calls deferUpdate() before snapshot(), then editReply(), so a
-    large network cannot miss the 3-second ACK window. Refresh has no cooldown
-    yet; it is owner-only and cached snapshot reads are cheap.
+Scripts:
+  scripts/deploy-commands.js
+  scripts/migrate-sqlite-to-mongo.js   legacy only; never run against a live DB
+                                       without a backup
 
 
 ================================================================================
-9. WHAT NEEDS IMPROVEMENT / SUGGESTED NEXT TASKS
+9. TESTS / VERIFICATION
 ================================================================================
 
-Pick the task the user actually asks for. Do not blindly implement the whole
-backlog. Priorities below are suggestions based on the current code.
+Run:
+  node --test tests/kurisu.test.js
+  npm test
 
+Current state: 37 tests, 37 passing.
 
---------------------------------------------------------------------------------
-9.0 MONGODB MIGRATION (PLANNED - P0 BACKEND CHANGE)
---------------------------------------------------------------------------------
+Coverage includes:
+  - database migrations idempotency and custom-row preservation
+  - guild isolation and atomic counters (including ticket numbering)
+  - warm caches filled by warmGuild
+  - emoji registry syntax and the null ticket TODO
+  - 28 modules and hardened defaults
+  - owner/bot/whitelist exemptions, Administrator not exempt
+  - compromised-account guard default off and owner protection
+  - antinuke channel-delete ban, incident, persistent watch, dedupe
+  - nuke guard mixed burst, sliding windows and persisted burst rows
+  - permission escalation/vanity classification
+  - bot-add executor + unapproved bot containment; trusted bot skipped
+  - punishment ban -> kick fallback
+  - raid levels/join counters
+  - recovery restore without dangerous permissions
+  - ticket channels excluded from snapshots and lockdown
+  - verification panel creation, role creation, idempotent click, cooldown,
+    account-age gate and removal
+  - ticket panel/create/private overwrites/numbering/max-open
+  - ticket close confirmation, claim, add/remove, staff-only list
+  - closing by number from another channel targets only the ticket channel
+  - premium enable/disable, startup expiry sweep, lazy expiry profile reset
+  - profile image magic bytes and flags-only persistence
+  - dashboard premium line read-only, grey buttons, authorization
+  - help entries and command/help counts
+  - prefix text command V2 replies and typed option parsing
+  - source regression: no Unicode emoji, raw embeds or accent colours
+  - Components V2 flags, grey-only buttons, no embeds
 
-Decision: replace SQLite/better-sqlite3 with MongoDB Atlas.
-  - Connection string: DATABASE_URL in .env.
-  - Atlas database name in the provided URI: prismo.
-  - Never hardcode the URI or commit it. It contains a username and password.
-  - If a URI with a real password has been shared in chat or logs, rotate that
-    database user's password before production use.
+Manual/live verification still needed:
+  - every slash command against real Discord
+  - gateway reconnect/resume behavior
+  - real audit-log delivery and hierarchy edge cases
+  - emoji rendering in the target guild/application
+  - lockdown/unlock on a large channel list
+  - channel/role restore and ticket channel creation on a disposable server
 
-This is not a drop-in driver swap. The current repository layer is synchronous
-(better-sqlite3), while every MongoDB driver operation is asynchronous. Expect
-a large refactor and treat it as a breaking backend change (version 2.0.0).
-
-Phase 1 - preparation
-  - Back up the whole data/ folder, especially data/kurisu.db.
-  - Confirm Atlas network access / IP allowlist and that the database user can
-    read and write the prismo database.
-  - Put the real URI in .env as DATABASE_URL. Do not put it in bot.txt.
-  - Add the official `mongodb` package.
-  - Keep better-sqlite3 temporarily for the one-time migration script; remove
-    it only after Mongo is verified.
-
-Phase 2 - rewrite the database layer
-  - src/database/index.js:
-      * MongoClient connect/close, database selection, startup ping.
-      * ensureIndexes() instead of SQL migrations.
-      * Connection failure must produce a clear fatal startup message.
-      * Do not log the URI; it contains credentials.
-  - src/database/repo.js:
-      * Convert every function from synchronous to async.
-      * Replace prepared statements with findOne, find, insertOne, updateOne,
-        findOneAndUpdate, countDocuments and aggregate.
-      * Use upserts plus unique indexes for settings/config/watch entries.
-      * Add a `counters` collection for numeric IDs. Cases, incidents, warnings,
-        recovery_log and join_history currently rely on integer IDs; preserve
-        them with an atomic nextId(name) helper.
-  - Update every caller:
-      * src/commands/**, src/components/**, src/engines/**, src/events/**.
-      * Search for `repo.` and add `await` where needed. A missed await returns
-        a Promise instead of data and will silently break logic.
-  - src/index.js:
-      * `await db.open()` before client.login().
-      * Close the Mongo client on SIGINT/SIGTERM.
-  - Cache hot reads (prefix, module config, whitelist) where appropriate so a
-    Mongo round-trip is not added to every message event.
-
-Collection mapping (SQLite -> MongoDB):
-  guild_settings      -> guild_settings      _id = guild_id
-  antinuke_modules    -> antinuke_modules    unique {guild_id, module}
-  raid_config         -> raid_config         _id = guild_id
-  lockdown_channels   -> lockdown_channels   unique {guild_id, channel_id}
-  whitelist           -> whitelist           unique {guild_id, user_id};
-                                              keep target_type and scopes
-  warnings            -> warnings            id + guild_id + user_id + ...
-  mod_cases           -> mod_cases           id + guild_id + user_id + ...
-  incidents           -> incidents           id + guild_id + executor_id + ...
-  log_channels        -> log_channels        unique {guild_id, type}
-  snapshots           -> snapshots           unique {guild_id, kind, target_id}
-  recovery_log        -> recovery_log        id + guild_id + ...
-  quarantine          -> quarantine          unique {guild_id, user_id}
-  join_history        -> join_history        id + guild_id + joined_at + ...
-  nuke_watch          -> nuke_watch          unique {guild_id, user_id};
-                                              TTL on expires_at_date (BSON
-                                              Date); keep numeric expires_at
-                                              for repo compatibility
-  nuke_recent         -> nuke_recent         unique {guild_id, executor_id,
-                                              entry_id}; TTL on created_at_date
-                                              or prune in code
-
-Recommended indexes:
-  antinuke_modules  { guild_id: 1, module: 1 } unique
-  whitelist         { guild_id: 1, user_id: 1 } unique
-  log_channels      { guild_id: 1, type: 1 } unique
-  snapshots         { guild_id: 1, kind: 1, target_id: 1 } unique
-  quarantine        { guild_id: 1, user_id: 1 } unique
-  nuke_watch        { guild_id: 1, user_id: 1 } unique
-  nuke_watch        { expires_at_date: 1 } TTL, expireAfterSeconds: 0
-                    (must be a BSON Date, not epoch milliseconds)
-  nuke_recent       { guild_id: 1, executor_id: 1, created_at: -1 }
-  nuke_recent       { guild_id: 1, executor_id: 1, entry_id: 1 } unique
-  mod_cases         { guild_id: 1, user_id: 1, created_at: -1 }
-  mod_cases         { guild_id: 1, id: 1 } unique
-  incidents         { guild_id: 1, created_at: -1 }
-  incidents         { guild_id: 1, executor_id: 1, created_at: -1 }
-  incidents         { guild_id: 1, id: 1 } unique
-  warnings          { guild_id: 1, user_id: 1, created_at: -1 }
-  join_history      { guild_id: 1, joined_at: -1 }
-  recovery_log      { guild_id: 1, created_at: -1 }
-  lockdown_channels { guild_id: 1, channel_id: 1 } unique
-
-Phase 3 - one-time data migration
-  - Add scripts/migrate-sqlite-to-mongo.js.
-  - Stop the bot. Back up data/kurisu.db.
-  - Read every SQLite table, insert into the mapped collections in batches.
-  - Preserve Discord IDs as strings and timestamps as epoch milliseconds.
-  - Set each counter to the current maximum numeric ID.
-  - Verify row counts per table and spot-check guild config, whitelist,
-    incidents, cases, warnings, snapshots and nuke_watch.
-  - Keep the SQLite file and the old commit as rollback until Mongo has run in
-    production for a reasonable period.
-
-Phase 4 - tests
-  - The current tests call the synchronous repo directly and use an in-memory
-    SQLite database; they must become async.
-  - Use mongodb-memory-server for local/CI tests, or a separate TEST_DATABASE_URL
-    database. Never point tests at the production prismo database.
-  - Clear collections between tests and preserve the guild-isolation test.
-  - Keep node --test tests/kurisu.test.js as the entry point.
-  - Add a migration smoke test that verifies a known SQLite fixture imports
-    with the same IDs and values.
-
-Phase 5 - cleanup and rollout
-  - Remove better-sqlite3 and SQLite-specific code only after validation.
-  - Update README.md, .env.example, package.json and this handoff.
-  - Bump the version to 2.0.0.
-  - Run a staging guild, verify startup, restart persistence, /security,
-    /guilds, antinuke incidents, nuke watch and logs.
-  - Watch Atlas connection/error metrics after deploy.
-
-Main risks:
-  - Missed `await` during the sync-to-async refactor.
-  - Numeric IDs changing or colliding; use counters, not ObjectId display.
-  - Atlas IP allowlist/SRV/network failures blocking startup.
-  - Added latency on hot paths if caches are removed.
-  - Race conditions on upserts; rely on unique indexes and atomic operators.
-  - Credential leakage through logs, errors or committed files.
-
-Acceptance criteria:
-  - Bot starts only after a successful Mongo connection and index setup.
-  - All tests pass against an isolated test database.
-  - Existing SQLite data is migrated with matching counts and IDs.
-  - Config, whitelist, cases, incidents, warnings, snapshots, nuke watch and
-    the Nuke Guard recent-burst window survive a bot restart.
-  - /security, /guilds and the antinuke pipeline work unchanged from the user's
-    perspective.
-
-
-P0 - correctness / user-facing confusion
-  1. [DONE 1.1.1] /guilds component timeout risk
-     File: src/commands/utility/guilds.js, component().
-     Now calls deferUpdate() before snapshot(), then editReply(ui.edit(...)).
-     The grey Refresh button forces a new snapshot while preserving the page.
-     It has no cooldown yet; it is owner-only.
-
-  2. [DONE 1.1.1] Prefix documentation mismatch
-     README examples and comments now use the default "!" (and <prefix> where
-     appropriate). /help shows the current server's prefix form as well as the
-     slash form. Tests still set "k" to prove custom prefixes work.
-
-  3. [DONE 1.1.1] Nuke Guard burst state was in-memory
-     Migration 5 adds nuke_recent. trackNuke() merges the persisted window,
-     writes each audit entry, and respondNuke() clears it after the response.
-     Covered by a test that clears in-memory state between the second and
-     third action.
-
-  4. [DONE 1.1.1] Nuke Guard incident label accuracy
-     Each tracked item stores every matching module key. respondNuke() labels
-     the incident with the full unique set instead of only the first module.
-
-P1 - UI / UX polish
-  5. [DONE 1.2.0] Whitelist scope picker redesign
-     Files: src/components/dashboard/index.js (whitelistView(),
-     whitelistScopeView(), scopeMask()), src/config/whitelist.js
-     (presetForMask(), moduleOptions()).
-     Grant page = level select + one preset select + Add/Remove pickers.
-     "Custom modules…" opens a paginated page (10 modules, one select) with
-     Save / Cancel / Prev / Next. State: <level>:<mask>[:<page>].
-     Old behaviour is preserved: legacy ks:wlsc chunk ids still work, an
-     explicit module pick still beats "Level default", and page 0 keeps the
-     historical two-argument ids.
-     The rewritten test found a real bug: a page submission previously rebuilt
-     the page from the carried mask, silently dropping pre-selected modules
-     (Discord omits unselected options), so clearing page 1 wiped page 2.
-     scopeMask() now treats the submitted page as authoritative.
-
-  6. [DONE 1.1.1] Settings log-channel list is long
-     Now shows only configured channels, a count, and one compact "Not set"
-     summary line. The type select + channel select still handles setup.
-
-  7. [DONE 1.1.1] /guilds clarity and refresh
-     Footer labels active users as Discord's approximate online count. Grey
-     Refresh action added; snapshot time is shown as a relative timestamp.
-     A refresh cooldown is still optional (P2).
-
-  8. [DONE 1.2.0] Diagnostics / "doctor" view
-     File: src/components/dashboard/diagnostics.js, routed as ks:v:diag.
-     Reachable from the Security Center main card and from Settings.
-     Checks database path, deploy mode, emoji registry, required bot
-     permissions (list of missing ones), role position vs the top role,
-     audit-log access, antinuke + enabled module count, configured log
-     channels, raid level and lockdown, whitelist trust entries, OWNER_IDS
-     and (when exposed) the privileged-intent application flags.
-     checks() is pure for tests; probe() performs the REST audit-log request.
-     Uses PermissionsBitField.Flags.* — the bare constant is not enumerable
-     that way (per-member names such as BanMembers live under .Flags).
-
-  9. [DONE 1.1.1] Help text examples
-     /help shows the slash example and a text example generated with the
-     server's actual prefix, not a hard-coded "k".
-
-P2 - scale / coverage
- 10. /guilds REST cost
-     It performs one REST guild fetch per guild. For large networks, use a
-     longer cache, background refresh, or a persisted snapshot. Consider using
-     cached memberCount for totals and fetching approximate presence only on
-     demand. Refresh currently bypasses the 60s cache on every click.
-
- 11. [DONE 1.2.0] Mocked interaction tests
-     Added: /banlist render + viewer/permission refusal, /incidents pagination
-     and viewership checks, raid.lockdown()/unlock() including the
-     already-denied channel skip, invites pause and previous-verification
-     restore, the /raid and /verification commands, recovery
-     snapshot/restoreChannel/restoreRole (dangerous permissions withheld,
-     ghost overwrites dropped), deleteWebhook/removeBot/deleteInvitesBy,
-     the whitelist preset and custom-scope flows, diagnostics (pure + probe),
-     and diagnostics authorization.
-     Still missing: dashboard modals (threshold/escalation/raid inputs) and
-     text-command permission denial. `/masskick` and `/role` permission
-     denials are the natural next additions.
-
- 12. Sharding
-     Not needed at the current scale. Add ShardingManager if the bot approaches
-     the gateway shard limit.
-
- 13. Localization
-     All strings are English. Add an i18n layer only if requested.
-
- 14. Cooldowns
-     Expensive commands (/guilds, /massban, /masskick, /purge) have no user
-     cooldown. /guilds Refresh is owner-only, but a short cooldown would be
-     cheap protection if the network grows. Add one if abuse or rate limits
-     become a problem.
-
- 15. Watchlist policy review
-     /watchlist add is server-owner only, but /watchlist remove is available
-     to Trusted Administrators. Decide whether removal should also be
-     owner-only or require confirmation. It is already audited.
-
- 16. [DONE 1.1.1] Documentation consistency
-     - README now requires Node 22+.
-     - OWNER_IDS is documented as required for /guilds.
-     - AUTO_DEPLOY is documented as false by default.
-     - The direct test command is documented for PowerShell/npm.ps1 issues.
-
- 17. Repo hygiene
-     A local "kurisu (1).zip" exists but is gitignored. Remove it if not
-     needed. Never commit .env or data/.
+Never run destructive tests on a real community.
 
 
 ================================================================================
-10. GUARDRAILS - DO NOT BREAK THESE
+10. RULES / DO NOT BREAK
 ================================================================================
 
-  - Do not replace Components V2 cards with classic embeds.
-  - Do not add accent colors, side bars or colored buttons.
-  - Do not use ButtonStyle.Primary, Success or Danger.
-  - Do not bypass permission/authorization checks in component handlers.
-  - Do not give Administrator permission automatic antinuke immunity.
-  - Do not allow Trusted Administrators to disable antinuke/raid.
-  - Do not remove owner protections.
-  - Do not expose /guilds to non-owners.
-  - Do not add GuildPresences without portal changes and a clear reason.
-  - Do not assume "k" is the default prefix.
-  - Do not commit .env, tokens, the SQLite database, the MongoDB URI or the zip.
-  - Do not paste the Atlas URI into source, logs, README, bot.txt or commits.
-  - Do not start the MongoDB migration without a SQLite backup and a rollback.
-  - Do not convert repo methods halfway; the sync-to-async change must be
-    complete or the whole bot will misbehave.
-  - Do not run destructive tests on a real community. Use a disposable guild.
-  - Do not add a new emoji unless it exists in the registry and the bot can
-    see it as a guild emoji or application emoji.
-  - Keep slash commands and text commands working for every top-level command.
-  - Keep the UI helper patterns; do not hand-build inconsistent containers.
-  - If a command name or option changes, redeploy slash commands.
-  - If a public view changes, keep customIds backward compatible where
-    practical, or make old messages fail gracefully.
+  - Components V2 only. No embeds, no accent colours, no non-secondary buttons
+    (except explicit link buttons where the existing design uses one).
+  - No Unicode emoji in user-facing text or source. Use the registry.
+  - Do not invent emoji IDs. A missing key must be reported, never replaced
+    with a Unicode fallback.
+  - Re-authorize EVERY component interaction from the database. Never trust
+    customId for permissions or target identity.
+  - Administrator permission alone never gives antinuke immunity.
+  - Trusted Administrators cannot disable antinuke or raid, cannot grant
+    bypass/trusted_admin, and cannot remove owner protections.
+  - Owner protections (guild owner, bot owner, Kurisu) stay intact.
+  - Do not add a security feature that is gated by premium.
+  - Do not expose /guilds or /premium to non-bot-owners.
+  - Do not add GuildPresences without a portal change and a clear reason.
+  - Do not assume "k" is the default prefix. Default is "!".
+  - Do not commit .env, tokens, DATABASE_URL, MongoDB data files, SQLite files
+    or the local zip. Do not paste an Atlas URI into source, logs, README,
+    bot.txt or commits.
+  - Keep one commit per task. Do not mix unrelated changes.
+  - Keep tests green and add coverage for every new feature.
 
 
 ================================================================================
-11. VERIFICATION CHECKLIST FOR THE NEXT BOT
+11. KNOWN LIMITS / RISKS
 ================================================================================
 
-Before saying a change is done:
-  [ ] node --check on every changed .js file.
-  [ ] node --test tests/kurisu.test.js -> 50/50 passing.
-  [ ] Do not declare shared const mock helpers after tests that use them
-      (temporal dead zone -> ReferenceError).
-  [ ] Test mocks that stand in for discord.js objects must provide every
-      property the engine reads (guild, user.user.bot, roles.cache,
-      permissions.has).
-  [ ] Render changed views as text/JSON and inspect spacing and component count.
-  [ ] Confirm every button is secondary/grey and no embed/color was introduced.
-  [ ] Confirm every component interaction re-checks authorization.
-  [ ] Confirm slash and text command paths still both work.
-  [ ] Run npm run deploy if command names/options changed.
-  [ ] Test on a disposable guild with audit logs and role hierarchy.
-  [ ] git diff --check.
-  [ ] Do not commit secrets or local data.
-  [ ] If MongoDB work is in scope: back up SQLite, verify Atlas access, set
-      DATABASE_URL only in .env, confirm indexes, and test against a dedicated
-      test database rather than production prismo.
-  [ ] If MongoDB work is in scope: verify every repo call is awaited and the
-      bot still passes all tests.
+  - Discord cannot restore messages from a deleted channel.
+  - Restored channels/roles get new IDs; deleted-role members are not
+    re-assigned.
+  - Server icon, banner and vanity URL cannot be restored through the API.
+    Kurisu restores the server name only.
+  - Restored roles and overwrites never regain dangerous permissions.
+  - Reverting a role edit only removes newly added dangerous permissions.
+  - Mass message deletion relies on bulk-delete audit entries; Discord merges
+    individual moderator deletions, so counts are approximate.
+  - Quarantine uses removed roles, a permissionless role and a 28-day timeout.
+  - Lockdown uses verification level, @everyone send permissions and invite
+    pause; it never mass-bans.
+  - Message logs show metadata, not content.
+  - Manually deleted ticket channels cannot be recovered. Transcripts must be
+    enabled in advance and go only to the ticket log channel.
+  - The `ticket` emoji is null until the owner uploads one; UI falls back to
+    the `staff` icon and startup validation reports the missing key.
+  - MongoDB TTL cleanup is not instantaneous; code filters expired rows.
+  - Warm caches assume the bot process is the only writer. External DB edits
+    require a restart or cache invalidation.
+  - The SQLite importer is legacy; do not run it against a live production
+    database without a backup and dry run.
 
 
 ================================================================================
-12. QUICK REFERENCE - COUNTS
+12. RECENT WORK (2.1.0)
 ================================================================================
 
-Top-level commands : 39
-Subcommands        : 24
-Help entries       : 54
-Antinuke modules   : 28
-Tests              : 50 passing
-UI                 : Components V2, grey buttons, red emojis only
-Default prefix     : !
-Database           : SQLite now (./data/kurisu.db); MongoDB Atlas planned
-MongoDB variable   : DATABASE_URL (.env only; database name: prismo)
-Bot owner variable : OWNER_IDS
-Version            : 1.1.1
-Latest feature commit: d2f8f8f
-Remote             : https://github.com/eunsoulja/KurisuDevelopment.git
+Task A - Antinuke hardening:
+  - Ban-first response, fallback ban -> kick -> quarantine -> strip -> timeout.
+  - Hot-path caches; zero awaited I/O before a ban.
+  - Nuke Guard mixed-burst ban.
+  - Durable 24h watch kept even after a ban.
+  - Bot-add containment (bot, integrations, dangerous roles, invites).
+  - Bounded restore concurrency (3) and category-first mitigation.
+  - Re-entrant locks and already-punished set.
+  - Module default migration preserving custom rows.
+  - Optional compromised-account guard, default off.
+
+Task B - Verification panel:
+  - /verification panel|config|remove.
+  - Stable public kv:verify button.
+  - Verified role creation/validation and hierarchy checks.
+  - Ephemeral click notices, 5s cooldown, raid/account-age gate.
+  - Member log and help integration.
+
+Task C - Tickets:
+  - /ticket panel|setup|close|add|remove|claim|list.
+  - Private channels, atomic numbering, max-open, confirmation close.
+  - Transcripts off by default, log-channel only, never persisted.
+  - ticket log type, Mongo collections/indexes.
+  - Ticket channels excluded from snapshots/restoration/lockdown.
+  - Manual-delete risk stated in the UI.
+
+Task D - Premium / profile:
+  - Bot-owner-only /premium enable|disable|list.
+  - Premium rows with expiry; lazy + startup/hourly reset.
+  - /botprofile avatar|banner|reset|view for premium guilds.
+  - Guild-member profile endpoint, image validation, flags only.
+  - Read-only Premium line in Security Center.
+  - Security features are never gated.
+
+Task E - Emoji/theme sweep:
+  - Scanned src/ for Unicode emoji; replaced arrows and other symbols.
+  - Added ticket emoji placeholder with an explicit TODO.
+  - Startup validation reports null/missing keys without crashing.
+  - Regression tests for Unicode, embeds, accent colours and button styles.
+  - Consistent red-emoji, colourless V2 theme.
+
+Known discrepancy: bot.txt previously described SQLite and 1.2.0. The repository
+is already MongoDB 2.0.0+/2.1.0; code is authoritative. This document was
+updated to match the code.
+
 
 ================================================================================
-END OF HANDOFF
+13. QUICK REFERENCE
 ================================================================================
+
+Bot permissions integer : 1100451490998
+Default prefix          : !
+Commands                : 42
+Help entries            : 71
+Antinuke modules        : 28
+Tests                   : 37 passing
+UI                      : Components V2, grey buttons, red emojis only
+Database                : MongoDB via DATABASE_URL
+Database name default   : URI path, then DATABASE_NAME, then "prismo"
+Bot owner variable      : OWNER_IDS
+Version                 : 2.1.0

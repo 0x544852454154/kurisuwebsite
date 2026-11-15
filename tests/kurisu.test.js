@@ -1,415 +1,831 @@
 'use strict';
-const test = require('node:test');
+const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const {
-  AuditLogEvent, MessageFlags, PermissionsBitField, ChannelType, GuildVerificationLevel, Collection,
+  AuditLogEvent: A, MessageFlags, PermissionsBitField, ChannelType, Collection,
 } = require('discord.js');
-const { fakeGuild, walk } = require('./helpers');
+const helpers = require('./helpers');
+const { fakeGuild, walk } = helpers;
 
 process.env.OWNER_IDS = 'botowner';
 const db = require('../src/database');
-db.open(':memory:');
 const repo = require('../src/database/repo');
+const migrations = require('../src/database/migrations');
 const perms = require('../src/permissions');
 const antinuke = require('../src/engines/antinuke');
-const { MODULES, KEYS } = require('../src/engines/antinuke/modules');
 const raid = require('../src/engines/raid');
 const recovery = require('../src/engines/recovery');
-const { DANGEROUS_BITS } = require('../src/config/settings');
-const { EMOJIS, parseEmoji } = require('../src/config/emojis');
-const { ALL_MASK, SCOPE_PRESETS, maskForScopes, maskId, parseMask, parseScopes, scopesForMask } = require('../src/config/whitelist');
-const helpers = require('../src/utils/helpers');
+const premiumEngine = require('../src/engines/premium');
+const { MODULES, KEYS } = require('../src/engines/antinuke/modules');
+const { PUNISHED_LABEL, LIMITS } = require('../src/config/settings');
+const { EMOJIS, parseEmoji, validateEmojis } = require('../src/config/emojis');
+const { ALL_MASK, SCOPE_PRESETS, maskForScopes, maskId, parseMask, scopesForMask } = require('../src/config/whitelist');
+const helperFns = require('../src/utils/helpers');
 const ui = require('../src/components/common/ui');
 const help = require('../src/components/help');
 const dashboard = require('../src/components/dashboard');
+const verification = require('../src/components/verification');
+const tickets = require('../src/components/tickets');
 const commands = require('../src/commands').load();
 const text = require('../src/text');
 
-// ---------------------------------------------------------------------------
-// Shared mock helpers. Declared before any test so no test callback hits the
-// temporal dead zone of a `const` helper defined further down the file.
-// ---------------------------------------------------------------------------
-/** Dashboard interaction: a random member unless overridden. */
-const dashInteraction = (over = {}) => {
-  const calls = { updated: null, replied: null };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const plain = (v) => JSON.stringify(v ?? '');
+const jsonOf = (payload) => payload?.components?.[0]?.toJSON?.() || payload?.components?.[0] || {};
+const allNodes = (payload) => walk(jsonOf(payload));
+const buttonNodes = (payload) => allNodes(payload).filter((n) => n.type === 2);
+const componentIds = (payload) => allNodes(payload).flatMap((n) => (n.custom_id ? [n.custom_id] : []));
+
+before(async () => { await helpers.setup(); });
+beforeEach(async () => { await helpers.resetDb(); });
+after(async () => { await helpers.teardown(); });
+
+const bits = (v = 0n) => new PermissionsBitField(BigInt(v));
+const role = (id, position = 1, permissionBits = 0n, extra = {}) => ({
+  id, name: id, position, managed: false, permissions: bits(permissionBits),
+  color: 0, hoist: false, mentionable: false, tags: null, ...extra,
+});
+
+function optionsApi(values = {}) {
   return {
-    calls,
-    customId: 'ks:v:main',
-    guild: { id: 'gi', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } },
-    member: { id: 'rando', permissions: { has: () => true } }, user: { id: 'rando' }, values: [],
-    isFromMessage: () => false, isMessageComponent: () => true,
-    update: async (p) => { calls.updated = p; }, reply: async (p) => { calls.replied = p; },
-    ...over,
-  };
-};
-const plainText = (payload) => JSON.stringify(payload ?? '');
-/** Scopes staged in every ks:wladd / ks:wladdr id of a rendered payload. */
-const stagedScopes = (payload) => walk(payload.components[0].toJSON())
-  .flatMap((n) => (n.custom_id ? [n.custom_id] : []))
-  .filter((id) => id.startsWith('ks:wladd:') || id.startsWith('ks:wladdr:'))
-  // ks:wladd:<level>:<mask>[:<page>] and ks:wladdr:<level>:<mask>[:<page>]
-  .map((id) => scopesForMask(parseMask(id.split(':')[3])) || [])
-  .flat();
-function fakeMember(perms = 0n, over = {}) {
-  const bits = BigInt(perms); // never hand a PermissionsBitField constant to the constructor
-  return {
-    id: 'mod', permissions: new PermissionsBitField(bits), memberPermissions: new PermissionsBitField(bits),
-    roles: { highest: { position: 9, id: 'rmod' }, cache: new Map() },
-    guild: over.guild, kick: async () => {}, timeout: async () => {},
-    ...over,
+    getSubcommand: () => values.subcommand || null,
+    getSubcommandGroup: () => null,
+    getString: (n) => (values[n] === undefined ? null : String(values[n])),
+    getInteger: (n) => (Number.isInteger(values[n]) ? values[n] : null),
+    getNumber: (n) => (typeof values[n] === 'number' ? values[n] : null),
+    getBoolean: (n) => (typeof values[n] === 'boolean' ? values[n] : null),
+    getUser: (n) => values[n]?.user || values[n] || null,
+    getMember: (n) => values[n]?.member || null,
+    getRole: (n) => values[n]?.role || values[n] || null,
+    getChannel: (n) => values[n]?.channel || values[n] || null,
+    getAttachment: (n) => values[n] || null,
+    getFocused: () => '',
   };
 }
-const chatInput = (over = {}) => ({
-  inGuild: () => true, guild: over.guild, user: { id: 'mod', tag: 'mod#0001' }, member: over.member,
-  deferred: false, replied: false,
-  reply: async (p) => { over.sink.replied = p; }, deferReply: async () => { over.deferred = true; },
-  editReply: async (p) => { over.sink.edited = p; },
-  ...over,
+
+function interaction({ guild, member, user, customId = null, values = {}, options = {}, channel, channelId, client } = {}) {
+  const sink = {};
+  const i = {
+    client: client || guild?.client || {},
+    guild, guildId: guild?.id, member, user: user || member?.user || member,
+    memberPermissions: member?.permissions,
+    customId, values: values.values || [],
+    channel: channel || guild?.channels?.cache?.values?.().next?.().value || null,
+    channelId: channelId || channel?.id || guild?.channels?.cache?.keys?.().next?.().value,
+    commandName: values.commandName,
+    createdTimestamp: Date.now(), deferred: false, replied: false,
+    inGuild: () => true, inCachedGuild: () => true,
+    isChatInputCommand: () => true, isMessageComponent: () => !!customId, isFromMessage: () => false,
+    options: optionsApi(options),
+    reply: async (p) => { sink.replied = p; i.replied = true; return { edit: async () => {}, delete: async () => {} }; },
+    deferReply: async () => { i.deferred = true; },
+    editReply: async (p) => { sink.edited = p; return {}; },
+    update: async (p) => { sink.updated = p; return {}; },
+    followUp: async (p) => { sink.followUp = p; return {}; },
+    showModal: async (m) => { sink.modal = m; return {}; },
+    deleteReply: async () => {},
+  };
+  return { i, sink };
+}
+
+function fakeClient(guilds = []) {
+  const cache = new Map(guilds.map((g) => [g.id, g]));
+  return {
+    commands: new Map([...commands.entries()]),
+    guilds: { cache },
+    users: { cache: new Map(), fetch: async () => null },
+    ws: { ping: 42, shards: { size: 1 } },
+    user: { id: 'kurisu', tag: 'Kurisu#0001', displayAvatarURL: () => 'https://example.com/a.png' },
+  };
+}
+
+const dashInteraction = (guild, over = {}) => interaction({
+  guild,
+  member: { id: 'owner', user: { id: 'owner' }, permissions: bits(PermissionsBitField.Flags.Administrator) },
+  user: { id: 'owner' }, customId: 'ks:v:main', ...over,
 });
 
-test('database: migrations are idempotent and config survives a restart', async () => {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'kurisu-')), 'persist.db');
-  const Database = require('better-sqlite3');
-  // open the real module against a file, write, close, reopen
-  db.close();
-  db.open(file);
-  repo.saveModule('gA', 'massBan', { enabled: false, threshold: 7, window_sec: 33, punishment: 'kick' });
-  repo.addWhitelist('gA', 'u1', 'bypass', 'owner');
-  repo.setRaid('gA', { high_joins: 42 });
-  db.close();
-  db.open(file);
-  const m = repo.getModule('gA', 'massBan', MODULES);
-  assert.equal(m.threshold, 7); assert.equal(m.enabled, 0); assert.equal(m.punishment, 'kick');
-  assert.equal(repo.getWhitelist('gA', 'u1').level, 'bypass');
-  assert.equal(repo.getRaid('gA').high_joins, 42);
-  assert.equal(new Database(file).prepare('SELECT COUNT(*) c FROM schema_migrations').get().c, 5);
-  db.close();
-  db.open(':memory:');
+// ---------------------------------------------------------------------------
+// database, migrations, emoji registry
+// ---------------------------------------------------------------------------
+test('database: migrations are idempotent and never overwrite custom module rows', async () => {
+  const database = db.get();
+  await database.collection('schema_migrations').deleteOne({ _id: 'antinuke_defaults_v2' });
+  await database.collection('antinuke_modules').insertMany([
+    { guild_id: 'gA', module: 'botAdd', enabled: 0, threshold: 1, window_sec: 60, punishment: 'kick' },
+    { guild_id: 'gA', module: 'channelDelete', enabled: 1, threshold: 3, window_sec: 5, punishment: 'ban' },
+    { guild_id: 'gB', module: 'roleDelete', enabled: 1, threshold: 2, window_sec: 10, punishment: 'kick' },
+  ]);
+  const first = await migrations.run(database);
+  assert.equal(first.antinukeDefaults.skipped, false);
+  const custom = await database.collection('antinuke_modules').findOne({ guild_id: 'gA', module: 'botAdd' });
+  assert.equal(custom.enabled, 0, 'custom disabled configuration is preserved');
+  const customThreshold = await database.collection('antinuke_modules').findOne({ guild_id: 'gA', module: 'channelDelete' });
+  assert.equal(customThreshold.threshold, 3, 'custom thresholds are preserved');
+  const legacy = await database.collection('antinuke_modules').findOne({ guild_id: 'gB', module: 'roleDelete' });
+  assert.equal(legacy, null, 'exact legacy defaults are removed so the new defaults apply');
+  const second = await migrations.run(database);
+  assert.equal(second.antinukeDefaults.skipped, true, 'migration is idempotent');
 });
 
-test('database: guild data is isolated', () => {
-  repo.addWarning('gX', 'u', 'm', 'a'); repo.addWarning('gY', 'u', 'm', 'b');
-  assert.equal(repo.countWarnings('gX', 'u'), 1);
-  assert.equal(repo.addCase('gX', { userId: 'u', moderatorId: 'm', action: 'ban' }).case_number, 1);
-  assert.equal(repo.addCase('gY', { userId: 'u', moderatorId: 'm', action: 'ban' }).case_number, 1);
-  assert.equal(repo.addCase('gX', { userId: 'u', moderatorId: 'm', action: 'kick' }).case_number, 2);
-  repo.addNukeRecent('gX', 'u', 'e1', ['memberKick'], Date.now());
-  assert.equal(repo.listNukeRecent('gX', 'u', 0).length, 1);
-  assert.equal(repo.listNukeRecent('gY', 'u', 0).length, 0, 'burst state is guild-isolated');
-  repo.clearNukeRecent('gX', 'u');
-  assert.equal(repo.listNukeRecent('gX', 'u', 0).length, 0);
+test('database: guild data is isolated and counters are atomic', async () => {
+  await repo.addWarning('gX', 'u', 'm', 'a');
+  await repo.addWarning('gY', 'u', 'm', 'b');
+  assert.equal(await repo.countWarnings('gX', 'u'), 1);
+  assert.equal((await repo.addCase('gX', { userId: 'u', moderatorId: 'm', action: 'ban' })).case_number, 1);
+  assert.equal((await repo.addCase('gY', { userId: 'u', moderatorId: 'm', action: 'ban' })).case_number, 1);
+  assert.equal((await repo.addCase('gX', { userId: 'u', moderatorId: 'm', action: 'kick' })).case_number, 2);
+  const numbers = await Promise.all(Array.from({ length: 12 }, () => repo.nextTicketNumber('gX')));
+  assert.equal(new Set(numbers).size, 12, 'ticket numbers are unique under concurrency');
+  await repo.addNukeRecent('gX', 'u', 'e1', ['massKick'], Date.now());
+  assert.equal((await repo.listNukeRecent('gX', 'u', 0)).length, 1);
+  assert.equal((await repo.listNukeRecent('gY', 'u', 0)).length, 0);
 });
 
-test('emoji registry: every entry has exact <:name:id> syntax', () => {
-  for (const [k, v] of Object.entries(EMOJIS)) assert.ok(parseEmoji(v), `${k} malformed`);
-  assert.ok(Object.keys(EMOJIS).length >= 30);
+test('database: antinuke hot-path caches are filled by warmGuild', async () => {
+  await repo.setGuild('gw', 'antinuke_enabled', 1);
+  await repo.saveModule('gw', 'botAdd', { enabled: true, threshold: 9, window_sec: 30, punishment: 'ban' });
+  await repo.addWhitelist('gw', 'trusted', 'trusted_admin', 'owner');
+  await repo.warmGuild('gw');
+  assert.equal(repo.isWarm('gw'), true);
+  assert.equal(repo.cachedGuild('gw').antinuke_enabled, 1);
+  assert.equal(repo.cachedModule('gw', 'botAdd', MODULES).threshold, 9);
+  assert.equal(repo.cachedWhitelist('gw').byId.get('trusted').level, 'trusted_admin');
 });
 
-test('modules: 28 protection modules, each with defaults', () => {
-  assert.equal(KEYS.length, 28);
-  for (const k of KEYS) { const d = MODULES[k].defaults; assert.ok(d.threshold > 0 && d.windowSec > 0 && d.punishment, k); }
-  for (const k of ['nukeGuard', 'massUnban', 'threadDelete', 'assetCreate', 'automodRule']) assert.ok(MODULES[k], `missing ${k}`);
-});
-
-test('permissions: exemption rules', () => {
-  const { guild } = fakeGuild();
-  assert.ok(perms.isExempt(guild, 'owner'));
-  assert.ok(perms.isExempt(guild, 'botowner'));
-  assert.ok(perms.isExempt(guild, 'kurisu'));
-  assert.ok(!perms.isExempt(guild, 'randomadmin'), 'administrator alone grants no immunity');
-  repo.addWhitelist('g1', 'tm', 'trusted_mod', 'owner');
-  assert.ok(!perms.isExempt(guild, 'tm', 'general'));
-  assert.ok(perms.isExempt(guild, 'tm', 'message'));
-  assert.ok(!perms.isExempt(guild, 'tm', 'message', 'channelCreate'), 'trusted_mod defaults to message modules only');
-  repo.addWhitelist('g1', 'byp', 'bypass', 'owner');
-  assert.ok(perms.isExempt(guild, 'byp'));
-});
-
-test('whitelist: scope parsing and dashboard masks', () => {
-  assert.deepEqual(parseScopes('pings').scopes, ['everyoneMention', 'massMention']);
-  assert.deepEqual(parseScopes('channel-create,channel-rename').scopes, ['channelCreate', 'channelUpdate']);
-  assert.deepEqual(parseScopes('channelUpdate').scopes, ['channelUpdate']);
-  assert.deepEqual(parseScopes('all').scopes, ['*']);
-  assert.equal(parseScopes('default').scopes, null);
-  assert.ok(!parseScopes('not-a-scope').ok);
-  assert.deepEqual(scopesForMask(maskForScopes(['channelCreate', 'everyoneMention'])), ['channelCreate', 'everyoneMention']);
-  assert.equal(scopesForMask(0n), null);
-});
-
-test('permissions: role whitelist and specific scopes', () => {  const { guild, addMember } = fakeGuild();
-  const role = { id: 'roleMods', name: 'Moderators' };
-  addMember('scoped', { roles: [role] });
-  addMember('pinger');
-
-  repo.addWhitelist('g1', 'roleMods', 'trusted_mod', 'owner', {
-    targetType: 'role', scopes: ['channelCreate', 'channelUpdate'],
-  });
-  assert.ok(perms.isExempt(guild, 'scoped', 'general', 'channelCreate'));
-  assert.ok(perms.isExempt(guild, 'scoped', 'general', 'channelUpdate'));
-  assert.ok(!perms.isExempt(guild, 'scoped', 'general', 'channelDelete'));
-  assert.ok(!perms.isExempt(guild, 'scoped', 'general'), 'scoped entries are not fully exempt');
-
-  repo.addWhitelist('g1', 'pinger', 'trusted_mod', 'owner', { scopes: ['everyoneMention', 'massMention'] });
-  assert.ok(perms.isExempt(guild, 'pinger', 'message', 'everyoneMention'));
-  assert.ok(perms.isExempt(guild, 'pinger', 'message', 'massMention'));
-  assert.ok(!perms.isExempt(guild, 'pinger', 'message', 'massDelete'));
-  assert.ok(!perms.isExempt(guild, 'pinger', 'general', 'channelCreate'));
-
-  repo.addWhitelist('g1', 'allmods', 'trusted_mod', 'owner', { scopes: ['*'] });
-  assert.ok(perms.isExempt(guild, 'allmods', 'general', 'channelDelete'));
-  assert.ok(perms.isExempt(guild, 'allmods', 'general'), 'explicit all-modules entry is fully exempt');
-});
-
-test('permissions: whitelist authority and owner protection', () => {  const { guild, addMember } = fakeGuild();
-  const admin = addMember('ta'); admin.permissions = new (require('discord.js').PermissionsBitField)(8n);
-  repo.addWhitelist('g1', 'ta', 'trusted_admin', 'owner');
-  const plain = addMember('plain');
-  assert.ok(perms.canGrantLevel(guild, { id: 'owner' }, 'bypass').ok);
-  assert.ok(!perms.canGrantLevel(guild, admin, 'bypass').ok, 'trusted admin cannot grant bypass');
-  assert.ok(!perms.canGrantLevel(guild, admin, 'trusted_admin').ok);
-  assert.ok(perms.canGrantLevel(guild, admin, 'trusted_mod').ok);
-  assert.ok(!perms.canGrantLevel(guild, plain, 'trusted_mod').ok, 'ordinary member cannot edit whitelist');
-  assert.ok(!perms.canRemoveEntry(guild, { id: 'owner' }, 'owner').ok, 'owner protection cannot be removed');
-  assert.ok(!perms.canManageSecurity(guild, plain));
-  assert.ok(perms.canManageSecurity(guild, admin));
-});
-
-test('permissions: moderation hierarchy', () => {
-  const { guild, addMember } = fakeGuild();
-  const mod = addMember('mod', { position: 5 });
-  const high = addMember('high', { position: 9 });
-  const low = addMember('low', { position: 2 });
-  const check = (t) => perms.checkTarget({ guild, moderator: mod, targetId: t.id, targetMember: t, verb: 'ban' });
-  assert.match(check(high), /equal or higher/);
-  assert.equal(check(low), null);
-  assert.match(perms.checkTarget({ guild, moderator: mod, targetId: 'owner', targetMember: null, verb: 'ban' }), /owner/);
-  assert.match(perms.checkTarget({ guild, moderator: mod, targetId: 'mod', targetMember: mod, verb: 'ban' }), /yourself/);
-  assert.match(perms.checkTarget({ guild, moderator: mod, targetId: 'kurisu', targetMember: null, verb: 'ban' }), /myself/);
-});
-
-const entry = (id, action, executorId, extra = {}) => ({ id, action, executorId, targetId: `t${id}`, changes: [], ...extra });
-
-test('antinuke: threshold, fast kick, incident record, dedupe', async () => {
-  const { guild, kicked, addMember } = fakeGuild();
-  addMember('attacker', { position: 3 });
-  repo.ensureGuild('g1');
-  repo.setGuild('g1', 'antinuke_enabled', 1);
-  await antinuke.handleAuditEntry(entry('e1', AuditLogEvent.ChannelDelete, 'attacker'), guild);
-  assert.equal(kicked.length, 0, 'below threshold: no punishment');
-  await antinuke.handleAuditEntry(entry('e1', AuditLogEvent.ChannelDelete, 'attacker'), guild); // duplicate id
-  assert.equal(kicked.length, 0, 'duplicate event ignored');
-  await antinuke.handleAuditEntry(entry('e2', AuditLogEvent.ChannelDelete, 'attacker'), guild);
-  assert.deepEqual(kicked, ['attacker']);
-  const inc = repo.lastIncident('g1');
-  assert.equal(inc.module, 'channelDelete'); assert.equal(inc.count, 2); assert.equal(inc.threshold, 2); assert.equal(inc.response, 'Kicked');
-  await antinuke.handleAuditEntry(entry('e3', AuditLogEvent.ChannelDelete, 'attacker'), guild);
-  assert.equal(kicked.length, 1, 'no repeat punishment inside the lock window');
-  assert.equal(repo.countIncidents('g1'), 1);
-});
-
-test('antinuke: never punishes owner, bot, whitelisted users or unattributed actions', async () => {
-  const { guild, banned } = fakeGuild();
-  repo.addWhitelist('g1', 'friend', 'trusted_admin', 'owner');
-  for (let n = 0; n < 6; n++) {
-    await antinuke.handleAuditEntry(entry(`o${n}`, AuditLogEvent.ChannelDelete, 'owner'), guild);
-    await antinuke.handleAuditEntry(entry(`k${n}`, AuditLogEvent.ChannelDelete, 'kurisu'), guild);
-    await antinuke.handleAuditEntry(entry(`f${n}`, AuditLogEvent.ChannelDelete, 'friend'), guild);
-    await antinuke.handleAuditEntry(entry(`u${n}`, AuditLogEvent.ChannelDelete, null), guild);
+test('emoji registry: every configured entry parses, missing ticket key is reported without crashing', async () => {
+  for (const [k, v] of Object.entries(EMOJIS)) {
+    if (v === null) continue;
+    assert.ok(parseEmoji(v), `${k} malformed`);
   }
-  assert.equal(banned.length, 0);
+  assert.ok(Object.keys(EMOJIS).length >= 30);
+  assert.equal(EMOJIS.ticket, null, 'ticket icon is an explicit TODO, never a Unicode fallback');
+  const problems = await validateEmojis({
+    emojis: { cache: new Map() },
+    application: { emojis: { fetch: async () => new Map() } },
+  });
+  assert.ok(problems.some((p) => p.startsWith('ticket:')), 'startup validation names the missing ticket key');
+});
+
+test('modules: 28 modules with hardened critical defaults', () => {
+  assert.equal(KEYS.length, 28);
+  for (const k of KEYS) {
+    const d = MODULES[k].defaults;
+    assert.ok(d.threshold > 0 && d.windowSec > 0 && d.punishment, k);
+  }
+  for (const k of ['channelDelete', 'roleDelete', 'botAdd', 'permEscalation', 'automodRule', 'vanityChange', 'prune', 'massUnban', 'webhookDelete', 'nukeGuard']) {
+    assert.equal(MODULES[k].defaults.punishment, 'ban', `${k} defaults to ban`);
+  }
+  assert.equal(MODULES.channelDelete.defaults.windowSec, 5);
+  assert.equal(MODULES.roleDelete.defaults.windowSec, 5);
+});
+
+// ---------------------------------------------------------------------------
+// permissions
+// ---------------------------------------------------------------------------
+test('permissions: owner, bot and whitelist exemptions; Administrator is not enough', async () => {
+  const { guild, addMember } = fakeGuild();
+  const admin = addMember('admin', { position: 5 });
+  admin.permissions = bits(PermissionsBitField.Flags.Administrator);
+  assert.equal(await perms.isExempt(guild, 'owner'), true);
+  assert.equal(await perms.isExempt(guild, 'botowner'), true);
+  assert.equal(await perms.isExempt(guild, 'kurisu'), true);
+  assert.equal(await perms.isExempt(guild, 'admin', 'general', null, admin), false, 'Administrator alone never exempts');
+  await repo.addWhitelist(guild.id, 'trusted', 'bypass', 'owner');
+  assert.equal(await perms.isExempt(guild, 'trusted', 'general', 'botAdd'), true);
+
+  await repo.addWhitelist(guild.id, 'role1', 'trusted_mod', 'owner', { targetType: 'role', scopes: ['everyoneMention', 'massMention'] });
+  await repo.warmGuild(guild.id);
+  const mod = addMember('m1', { position: 2, roles: [{ id: 'role1' }] });
+  assert.equal(perms.isExemptSync(guild, 'm1', 'message', 'everyoneMention', mod), true);
+  assert.equal(perms.isExemptSync(guild, 'm1', 'general', 'channelDelete', mod), false, 'scoped role entries only cover their modules');
+});
+
+test('permissions: compromised-account guard is opt-in and preserves owner protections', async () => {
+  const { guild, addMember } = fakeGuild();
+  await repo.addWhitelist(guild.id, 'newadmin', 'bypass', 'owner');
+  const young = addMember('newadmin');
+  young.user.createdTimestamp = Date.now();
+  await repo.warmGuild(guild.id);
+  assert.equal(perms.isExemptSync(guild, 'newadmin', 'general', 'botAdd', young), true, 'guard is off by default');
+  await repo.setGuild(guild.id, 'compromised_guard', 1);
+  assert.equal(perms.isExemptSync(guild, 'newadmin', 'general', 'botAdd', young), false, 'young whitelisted account loses exemption');
+  assert.equal(perms.isExemptSync(guild, 'owner', 'general', 'botAdd'), true, 'guild owner is still protected');
+});
+
+// ---------------------------------------------------------------------------
+// antinuke
+// ---------------------------------------------------------------------------
+const audit = (id, action, executorId, extra = {}) => ({ id, action, executorId, targetId: 't1', changes: [], ...extra });
+
+async function preparedGuild(id = 'gn', over = {}) {
+  const fake = fakeGuild({ id, ownerId: 'owner', ...over });
+  fake.guild.client = { user: { id: 'kurisu' } };
+  await repo.setGuild(id, 'antinuke_enabled', 1);
+  await repo.setGuild(id, 'escalation_threshold', 0);
+  await repo.warmGuild(id);
+  return fake;
+}
+
+test('antinuke: two channel deletions ban the executor, record an incident and keep a 24h watch', async () => {
+  const { guild, addMember, banned } = await preparedGuild('ga1');
+  addMember('bad', { position: 3 });
+  await antinuke.handleAuditEntry(audit('a1', A.ChannelDelete, 'bad'), guild);
+  await antinuke.handleAuditEntry(audit('a2', A.ChannelDelete, 'bad'), guild);
+  assert.ok(banned.includes('bad'));
+  assert.equal(await repo.countIncidents('ga1'), 1);
+  const watch = await repo.getNukeWatch('ga1', 'bad');
+  assert.ok(watch && watch.expires_at > Date.now() + 23 * 3600 * 1000, 'watch survives the ban');
+  await antinuke.handleAuditEntry(audit('a2', A.ChannelDelete, 'bad'), guild);
+  assert.equal(await repo.countIncidents('ga1'), 1, 'duplicate audit entries are ignored');
+});
+
+test('antinuke: owner, bot owner, whitelisted and unattributed actions are never punished', async () => {
+  const { guild, banned } = await preparedGuild('ga2');
+  await repo.addWhitelist('ga2', 'trusted', 'bypass', 'owner');
+  await repo.warmGuild('ga2');
+  for (const id of ['owner', 'botowner', 'trusted']) {
+    await antinuke.handleAuditEntry(audit(`x-${id}`, A.ChannelDelete, id), guild);
+    await antinuke.handleAuditEntry(audit(`y-${id}`, A.ChannelDelete, id), guild);
+  }
+  await antinuke.handleAuditEntry({ id: 'no-executor', action: A.ChannelDelete, executorId: null, changes: [] }, guild);
+  assert.deepEqual(banned, [], 'no protected account is banned');
+});
+
+test('antinuke: Administrator permission alone does not exempt an executor', async () => {
+  const { guild, addMember, banned } = await preparedGuild('ga2b');
+  addMember('admin', { position: 4 }).permissions = bits(PermissionsBitField.Flags.Administrator);
+  await antinuke.handleAuditEntry(audit('admin-add', A.BotAdd, 'admin', { targetId: 'added' }), guild);
+  assert.deepEqual(banned, ['admin'], 'Administrator is treated as a normal executor');
 });
 
 test('antinuke: disabled modules do nothing', async () => {
-  const { guild, banned } = fakeGuild();
-  repo.saveModule('g1', 'massKick', { ...repo.getModule('g1', 'massKick', MODULES), enabled: false });
-  for (let n = 0; n < 5; n++) await antinuke.handleAuditEntry(entry(`mk${n}`, AuditLogEvent.MemberKick, 'someone'), guild);
-  assert.equal(banned.length, 0);
+  const { guild, banned } = await preparedGuild('ga3');
+  await repo.saveModule('ga3', 'channelDelete', { enabled: false, threshold: 2, window_sec: 5, punishment: 'ban' });
+  await antinuke.handleAuditEntry(audit('d1', A.ChannelDelete, 'bad'), guild);
+  await antinuke.handleAuditEntry(audit('d2', A.ChannelDelete, 'bad'), guild);
+  assert.deepEqual(banned, []);
 });
 
-test('antinuke: nuke guard kicks a mixed burst and bans on rejoin', async () => {
-  const { guild, kicked, banned, addMember } = fakeGuild({ id: 'gnuke' });
-  addMember('nuker', { position: 3 });
-  repo.ensureGuild('gnuke');
-  repo.setGuild('gnuke', 'antinuke_enabled', 1);
-
-  await antinuke.handleAuditEntry(entry('n1', AuditLogEvent.MemberKick, 'nuker'), guild);
-  await antinuke.handleAuditEntry(entry('n2', AuditLogEvent.MemberBanAdd, 'nuker'), guild);
-  assert.equal(kicked.length, 0, 'two actions stay below the guard');
-  await antinuke.handleAuditEntry(entry('n3', AuditLogEvent.MemberBanRemove, 'nuker'), guild);
-  assert.deepEqual(kicked, ['nuker'], 'third destructive action triggers an immediate kick');
-
-  const inc = repo.lastIncident('gnuke');
-  assert.equal(inc.module, 'nukeGuard');
-  assert.equal(inc.response, 'Kicked');
-  assert.equal(inc.count, 3);
-  assert.ok(repo.getNukeWatch('gnuke', 'nuker'), 'kicked nuke executor is watched');
-
-  const rejoined = addMember('nuker');
-  rejoined.guild = guild;
-  assert.equal(await antinuke.handleJoin(rejoined), true);
-  assert.ok(banned.includes('nuker'), 'watched executor is banned on rejoin');
-  assert.equal(repo.getNukeWatch('gnuke', 'nuker'), null);
+test('antinuke: nuke guard stops a mixed burst and records the module mix', async () => {
+  const { guild, banned } = await preparedGuild('ga4');
+  const entries = [
+    audit('n1', A.ChannelDelete, 'nuker'),
+    audit('n2', A.RoleDelete, 'nuker'),
+    audit('n3', A.MemberBanAdd, 'nuker'),
+  ];
+  for (const entry of entries) await antinuke.handleAuditEntry(entry, guild);
+  assert.ok(banned.includes('nuker'));
+  const incidents = await repo.pageIncidents('ga4', 5, 0);
+  const nuke = incidents.find((i) => i.module === 'nukeGuard');
+  assert.ok(nuke, 'nuke guard incident recorded');
+  assert.match(nuke.action, /Nuke attempt/);
 });
 
-test('antinuke: nuke guard burst survives an in-memory restart', async () => {
-  const { guild, kicked, addMember } = fakeGuild({ id: 'gnuke2' });
-  addMember('nuker2', { position: 3 });
-  repo.ensureGuild('gnuke2');
-  repo.setGuild('gnuke2', 'antinuke_enabled', 1);
+test('antinuke: sliding windows drop old actions and nuke bursts persist', async () => {
+  const key = 'gslide:u:channelDelete';
+  const t = Date.now();
+  antinuke.slide(key, 1000, 1, { id: 's1' }, t - 5000);
+  const now = antinuke.slide(key, 1000, 1, { id: 's2' }, t);
+  assert.equal(now.total, 1, 'old action fell outside the window');
 
-  await antinuke.handleAuditEntry(entry('p1', AuditLogEvent.MemberKick, 'nuker2'), guild);
-  await antinuke.handleAuditEntry(entry('p2', AuditLogEvent.MemberBanAdd, 'nuker2'), guild);
-  assert.equal(kicked.length, 0, 'two actions stay below the guard');
-
-  antinuke._state.recent.clear(); // simulate a process restart losing memory
-  await antinuke.handleAuditEntry(entry('p3', AuditLogEvent.MemberBanRemove, 'nuker2'), guild);
-
-  assert.deepEqual(kicked, ['nuker2'], 'persisted burst still reaches the guard threshold');
-  assert.equal(repo.lastIncident('gnuke2').count, 3);
-  assert.equal(repo.listNukeRecent('gnuke2', 'nuker2', 0).length, 0, 'burst state clears after response');
+  antinuke.trackNuke('gpersist', 'u', ['channelDelete'], { id: 'p1' }, 60_000, t);
+  await sleep(50);
+  const rows = await repo.listNukeRecent('gpersist', 'u', 0);
+  assert.equal(rows.length, 1, 'burst state is persisted for restart recovery');
 });
 
-test('antinuke: sliding window drops old actions', () => {
-  const t0 = 1_000_000;
-  assert.equal(antinuke.slide('w', 10_000, 1, null, t0).total, 1);
-  assert.equal(antinuke.slide('w', 10_000, 1, null, t0 + 5_000).total, 2);
-  assert.equal(antinuke.slide('w', 10_000, 1, null, t0 + 20_000).total, 1);
+test('antinuke: permission escalation and vanity changes are classified correctly', () => {
+  const guild = fakeGuild({ id: 'gc' }).guild;
+  guild.roles.cache.set('danger', role('danger', 2, PermissionsBitField.Flags.Administrator));
+  const escalated = antinuke.classify({
+    action: A.RoleUpdate,
+    changes: [{ key: 'permissions', old: '0', new: String(PermissionsBitField.Flags.Administrator) }],
+  }, guild);
+  assert.ok(escalated.some((m) => m.key === 'permEscalation'));
+  const vanity = antinuke.classify({ action: A.GuildUpdate, changes: [{ key: 'vanity_url_code', old: null, new: 'x' }] }, guild);
+  assert.ok(vanity.some((m) => m.key === 'vanityChange'));
+  const guildName = antinuke.classify({ action: A.GuildUpdate, changes: [{ key: 'name', old: 'a', new: 'b' }] }, guild);
+  assert.ok(guildName.some((m) => m.key === 'guildUpdate'));
 });
 
-test('antinuke: classification of guild update, vanity and permission escalation', () => {
-  const { guild } = fakeGuild();
-  const keys = (e) => antinuke.classify(e, guild).map((x) => x.key);
-  assert.deepEqual(keys({ action: AuditLogEvent.GuildUpdate, changes: [{ key: 'name' }] }), ['guildUpdate']);
-  assert.deepEqual(keys({ action: AuditLogEvent.GuildUpdate, changes: [{ key: 'vanity_url_code' }] }), ['vanityChange']);
-  assert.deepEqual(keys({ action: AuditLogEvent.RoleUpdate, changes: [{ key: 'name' }] }), ['roleUpdate']);
-  assert.deepEqual(keys({ action: AuditLogEvent.RoleUpdate, changes: [{ key: 'permissions', old: '0', new: '8' }] }).sort(), ['permEscalation', 'roleUpdate']);
-  assert.deepEqual(keys({ action: AuditLogEvent.RoleUpdate, changes: [{ key: 'permissions', old: '8', new: '0' }] }), ['roleUpdate']);
-  assert.deepEqual(keys({ action: AuditLogEvent.MessageBulkDelete, extra: { count: 40 } }), ['massDelete']);
+test('antinuke: bot add bans the executor and the unapproved bot, but leaves a trusted bot', async () => {
+  const { guild, banned } = await preparedGuild('ga5');
+  guild.members.fetch = async (id) => ({ id, user: { id, bot: true }, roles: { cache: new Map() } });
+  guild.fetchIntegrations = async () => new Map();
+  guild.invites = { fetch: async () => new Collection() };
+  await antinuke.handleAuditEntry(audit('b1', A.BotAdd, 'bad', { targetId: 'evilbot' }), guild);
+  await sleep(50);
+  assert.ok(banned.includes('bad'));
+  assert.ok(banned.includes('evilbot'), 'unapproved bot is contained');
+
+  await repo.addWhitelist('ga6', 'goodbot', 'bot', 'owner');
+  const second = await preparedGuild('ga6');
+  second.guild.members.fetch = async (id) => ({ id, user: { id, bot: true }, roles: { cache: new Map() } });
+  await antinuke.handleAuditEntry(audit('b2', A.BotAdd, 'bad2', { targetId: 'goodbot' }), second.guild);
+  await sleep(50);
+  assert.ok(second.banned.includes('bad2'));
+  assert.ok(!second.banned.includes('goodbot'), 'trusted bot is not removed');
 });
 
-test('raid: level thresholds', () => {
-  const cfg = { elevated_joins: 5, high_joins: 10, lockdown_joins: 20 };
-  assert.equal(raid.levelFor(cfg, 4), 'NORMAL');
-  assert.equal(raid.levelFor(cfg, 5), 'ELEVATED');
-  assert.equal(raid.levelFor(cfg, 10), 'HIGH');
-  assert.equal(raid.levelFor(cfg, 25), 'LOCKDOWN');
+test('punish: ban falls back to kick when Discord refuses the ban', async () => {
+  const { guild, addMember, kicked } = fakeGuild({ id: 'gpun' });
+  const member = addMember('bad');
+  guild.members.ban = async () => { throw Object.assign(new Error('missing permissions'), { code: 50013 }); };
+  const punish = require('../src/engines/antinuke/punish');
+  const result = await punish.apply(guild, 'bad', 'ban', 'test');
+  assert.equal(result.ok, true);
+  assert.equal(result.kind, 'kick');
+  assert.equal(result.detail, 'fallback from ban');
+  assert.deepEqual(kicked, ['bad']);
+  assert.equal(member.id, 'bad');
 });
 
-test('raid: join history and detection counters persist', () => {
-  repo.addJoin('gr', 'a', Date.now(), 0, true); repo.addJoin('gr', 'b', Date.now(), 0, false);
-  const c = repo.countJoins('gr', Date.now() - 10_000);
-  assert.equal(c.c, 2); assert.equal(c.s, 1);
+// ---------------------------------------------------------------------------
+// raid, recovery and ticket isolation
+// ---------------------------------------------------------------------------
+test('raid: level thresholds and join counters persist', async () => {
+  assert.equal(raid.levelFor({ elevated_joins: 5, high_joins: 10, lockdown_joins: 20 }, 4), 'NORMAL');
+  assert.equal(raid.levelFor({ elevated_joins: 5, high_joins: 10, lockdown_joins: 20 }, 5), 'ELEVATED');
+  assert.equal(raid.levelFor({ elevated_joins: 5, high_joins: 10, lockdown_joins: 20 }, 10), 'HIGH');
+  assert.equal(raid.levelFor({ elevated_joins: 5, high_joins: 10, lockdown_joins: 20 }, 20), 'LOCKDOWN');
+  await repo.addJoin('gjoin', 'u1', Date.now(), Date.now() - 1000, 0);
+  assert.equal((await repo.countJoins('gjoin', 0)).c, 1);
 });
 
-test('helpers: duration parsing', () => {
-  assert.equal(helpers.parseDuration('10m'), 600);
-  assert.equal(helpers.parseDuration('1h30m'), 5400);
-  assert.equal(helpers.parseDuration('2d'), 172800);
-  assert.equal(helpers.parseDuration('abc'), null);
-  assert.equal(helpers.parseDuration('10x'), null);
-  assert.equal(helpers.formatDuration(5400), '1h 30m');
-  assert.deepEqual(helpers.parseIds('1234567890123456789, 1234567890123456789 22345678901234567'), ['1234567890123456789', '22345678901234567']);
+test('recovery: deleted channels and roles restore without dangerous permissions', async () => {
+  const overlay = (id, allow, deny = 0n) => ({ id, type: 0, allow: bits(allow), deny: bits(deny) });
+  let createdChannel = null;
+  const { guild } = fakeGuild({
+    id: 'grec',
+    roles: { everyone: { id: 'g1' }, cache: new Map([['g1', { id: 'g1', position: 0 }]]), create: async () => null },
+    channels: {
+      cache: new Map(), fetch: async () => null,
+      create: async (opts) => {
+        createdChannel = opts;
+        const created = { id: 'c2', guild, isThread: () => false, type: ChannelType.GuildText, name: opts.name };
+        guild.channels.cache.set('c2', created);
+        return created;
+      },
+    },
+  });
+  const source = {
+    id: 'c1', name: 'general', guild, isThread: () => false, type: ChannelType.GuildText,
+    parentId: null, rawPosition: 2, topic: 'hello', nsfw: false, rateLimitPerUser: 0,
+    permissionOverwrites: { cache: new Map([
+      ['g1', overlay('g1', PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.Administrator)],
+      ['ghost', overlay('ghost', PermissionsBitField.Flags.SendMessages)],
+    ]) },
+  };
+  await recovery.snapshotChannel(source);
+  assert.equal((await repo.getSnapshot('grec', 'channel', 'c1')).data.name, 'general');
+  assert.match(await recovery.restoreChannel(guild, 'c1'), /^restored/);
+  assert.equal(createdChannel.name, 'general');
+  const own = createdChannel.permissionOverwrites.find((o) => o.id === 'g1');
+  assert.equal(own.allow & BigInt(PermissionsBitField.Flags.Administrator), 0n);
+  assert.ok(!createdChannel.permissionOverwrites.some((o) => o.id === 'ghost'));
+  assert.equal(await repo.getSnapshot('grec', 'channel', 'c1'), null);
 });
 
-test('helpers: watching presence text', () => {
-  assert.equal(helpers.presenceName(0), '0 users');
-  assert.equal(helpers.presenceName(1), '1 user');
-  assert.equal(helpers.presenceName(1234), '1,234 users');
+test('tickets: channels are excluded from snapshots and lockdown', async () => {
+  const channel = {
+    id: 'tc1', name: 'ticket-1', guild: { id: 'gticket' }, isThread: () => false, type: ChannelType.GuildText,
+    parentId: null, rawPosition: 0, topic: null, nsfw: false, rateLimitPerUser: 0,
+    permissionOverwrites: { cache: new Map() }, manageable: true,
+    permissionOverwritesEdit: null,
+  };
+  await repo.createTicket('gticket', { number: 1, channelId: 'tc1', ownerId: 'owner' });
+  await recovery.snapshotChannel(channel);
+  assert.equal(await repo.getSnapshot('gticket', 'channel', 'tc1'), null);
+
+  let edits = 0;
+  channel.permissionOverwrites = { edit: async () => { edits++; }, cache: new Map() };
+  const { guild } = fakeGuild({
+    id: 'gticket',
+    channels: { cache: new Map([['tc1', channel]]), fetch: async () => null },
+  });
+  guild.channels.cache.set('other', {
+    ...channel, id: 'oc1', name: 'general', permissionOverwrites: { edit: async () => { edits++; }, cache: new Map() },
+  });
+  guild.roles.everyone = { id: 'gticket' };
+  await raid.lockdown(guild, 5, 'owner');
+  assert.equal(edits, 1, 'only the non-ticket channel is locked');
 });
 
-test('prefix: per-guild setting with a default', () => {
-  assert.equal(repo.getGuild('gp').prefix, '!');
-  repo.setGuild('gp', 'prefix', '?');
-  assert.equal(repo.getGuild('gp').prefix, '?');
-  assert.equal(repo.getGuild('gq').prefix, '!', 'other guilds keep the default');
+// ---------------------------------------------------------------------------
+// verification
+// ---------------------------------------------------------------------------
+async function verificationGuild(id = 'gv') {
+  const sent = [];
+  const createdRoles = [];
+  const member = {
+    id: 'owner', user: { id: 'owner', createdTimestamp: Date.now() - 400 * 86400000 },
+    permissions: bits(PermissionsBitField.Flags.Administrator), roles: { cache: new Map(), add: async () => {} },
+    highest: { position: 1 },
+  };
+  const channel = {
+    id: 'vc1', name: 'verify', type: ChannelType.GuildText, isTextBased: () => true,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (payload) => { sent.push(payload); return { id: 'vm1' }; },
+    messages: { fetch: async () => null },
+  };
+  const { guild } = fakeGuild({
+    id,
+    channels: { cache: new Map([['vc1', channel]]), fetch: async () => channel },
+    roles: {
+      everyone: { id },
+      cache: new Map(),
+      create: async (opts) => {
+        const r = { ...role('vr1', 1), name: opts.name, permissions: opts.permissions || bits(0) };
+        createdRoles.push(r);
+        guild.roles.cache.set(r.id, r);
+        return r;
+      },
+      fetch: async () => null,
+    },
+  });
+  guild.members.me = { id: 'kurisu', roles: { highest: { position: 50 } }, permissions: bits(PermissionsBitField.All) };
+  guild.roles.cache.set('vr1', role('vr1', 1));
+  guild.members.cache.set('owner', member);
+  guild.client = fakeClient([guild]);
+  await repo.setGuild(id, 'antinuke_enabled', 1);
+  await repo.warmGuild(id);
+  return { guild, channel, member, sent, createdRoles };
+}
+
+test('verification: panel command creates a stable public panel and verified role', async () => {
+  const { guild, channel, sent } = await verificationGuild('gv1');
+  const cmd = commands.get('verification');
+  const { i, sink } = interaction({
+    guild, member: guild.members.cache.get('owner'), user: { id: 'owner' },
+    values: { commandName: 'verification' }, options: { subcommand: 'panel', channel },
+  });
+  await cmd.execute(i);
+  assert.ok(sink.edited, 'command confirms the panel');
+  assert.equal(sent.length, 1);
+  assert.equal(buttonNodes(sent[0])[0].custom_id, 'kv:verify');
+  assert.equal(buttonNodes(sent[0])[0].style, 2);
+  const cfg = await repo.getVerification('gv1');
+  assert.equal(cfg.enabled, 1);
+  assert.equal(cfg.panel_message_id, 'vm1');
+  assert.ok(cfg.role_id);
+
+  const cfgView = interaction({ guild, member: guild.members.cache.get('owner'), user: { id: 'owner' }, values: { commandName: 'verification' }, options: { subcommand: 'config' } });
+  await cmd.execute(cfgView.i);
+  assert.match(plain(cfgView.sink.replied), /VERIFICATION CONFIG/);
 });
 
-const defsOf = (name, sub) => {
-  const json = commands.get(name).data.toJSON();
-  return sub ? json.options.find((o) => o.name === sub).options : json.options;
-};
+test('verification: click grants the role, is idempotent, cooldown-limited and raid-gated', async () => {
+  const { guild } = await verificationGuild('gv2');
+  await repo.setVerification('gv2', { panel_channel_id: 'vc1', panel_message_id: 'vm1', role_id: 'vr1', enabled: 1 });
+  const added = [];
+  const member = {
+    id: 'newbie', user: { id: 'newbie', createdTimestamp: Date.now() - 30 * 86400000 },
+    roles: { cache: new Map(), add: async (r) => { added.push(r.id); member.roles.cache.set(r.id, r); } },
+  };
+  const base = { guild, member, user: member.user, customId: 'kv:verify', channelId: 'vc1' };
+  const first = interaction(base);
+  await verification.handle(first.i);
+  assert.deepEqual(added, ['vr1']);
+  assert.ok(first.sink.replied.flags & MessageFlags.Ephemeral);
+  assert.equal(await repo.isVerified('gv2', 'newbie'), true);
 
-const textGuild = {
-  id: 'gtext',
-  ownerId: 'owner',
-  members: {
-    cache: new Map([['111111111111111111', {
-      id: '111111111111111111',
-      user: { id: '111111111111111111', bot: false, tag: 'user#0001', username: 'user' },
-      displayName: 'user', roles: { cache: new Map() },
-    }]]),
-    fetch: async (id) => textGuild.members.cache.get(id) || null,
-  },
-  roles: { cache: new Map([['222222222222222222', { id: '222222222222222222', name: 'Moderators' }]]), fetch: async () => null },
-  channels: { cache: new Map([['333333333333333333', { id: '333333333333333333', name: 'logs' }]]), fetch: async () => null },
-};
-const textMessage = { guild: textGuild, client: { users: { cache: new Map(), fetch: async () => null } } };
+  const second = interaction({ ...base, member: { ...member, roles: { cache: new Map([['vr1', { id: 'vr1' }]]), add: member.roles.add } } });
+  await verification.handle(second.i);
+  assert.match(plain(second.sink.replied), /already verified/);
 
-test('text commands: tokenizer and typed positional options', async () => {
-  assert.deepEqual(text.tokenize('@user reason:"spam and eggs"'), ['@user', 'reason:spam and eggs']);
+  const cooldownUser = {
+    id: 'cool', user: { id: 'cool', createdTimestamp: Date.now() - 30 * 86400000 },
+    roles: { cache: new Map(), add: async () => {} },
+  };
+  await verification.handle(interaction({ ...base, member: cooldownUser, user: cooldownUser.user }).i);
+  const cooldownAgain = interaction({ ...base, member: cooldownUser, user: cooldownUser.user });
+  await verification.handle(cooldownAgain.i);
+  assert.match(plain(cooldownAgain.sink.replied), /wait a few seconds/);
 
-  const ban = await text.parseOptions(textMessage, defsOf('ban'), text.tokenize('<@111111111111111111> spam and eggs 7'));
-  assert.equal(ban.values.user.user.id, '111111111111111111');
-  assert.equal(ban.values.reason, 'spam and eggs');
-  assert.equal(ban.values.delete_days, 7);
-
-  const banName = await text.parseOptions(textMessage, defsOf('ban'), text.tokenize('user spam'));
-  assert.equal(banName.values.user.user.id, '111111111111111111', 'required user option accepts a plain name');
-  assert.equal(banName.values.reason, 'spam');
-
-  const roleName = await text.parseOptions(textMessage, defsOf('role', 'add'), text.tokenize('user Moderators'));
-  assert.equal(roleName.values.user.user.id, '111111111111111111');
-  assert.equal(roleName.values.role.role.id, '222222222222222222');
-
-  const logsName = await text.parseOptions(textMessage, defsOf('logs', 'set'), text.tokenize('antinuke logs'));
-  assert.equal(logsName.values.type, 'antinuke');
-  assert.equal(logsName.values.channel.channel.id, '333333333333333333');
-
-  const help = await text.parseOptions(textMessage, defsOf('help'), text.tokenize('ban'));
-  assert.equal(help.values.command, 'ban', 'non-choice command falls through from category');
-  const helpCat = await text.parseOptions(textMessage, defsOf('help'), text.tokenize('moderation'));
-  assert.equal(helpCat.values.category, 'moderation');
-
-  const wl = await text.parseOptions(textMessage, defsOf('whitelist', 'add'), text.tokenize('<@111111111111111111> trusted_mod pings, channel-create'));
-  assert.equal(wl.values.user.user.id, '111111111111111111');
-  assert.equal(wl.values.level, 'trusted_mod');
-  assert.equal(wl.values.scopes, 'pings, channel-create');
-
-  const role = await text.parseOptions(textMessage, defsOf('role', 'add'), text.tokenize('<@111111111111111111> <@&222222222222222222> promod'));
-  assert.equal(role.values.user.user.id, '111111111111111111');
-  assert.equal(role.values.role.role.id, '222222222222222222');
-  assert.equal(role.values.reason, 'promod');
-
-  const logs = await text.parseOptions(textMessage, defsOf('logs', 'set'), text.tokenize('antinuke <#333333333333333333>'));
-  assert.equal(logs.values.type, 'antinuke');
-  assert.equal(logs.values.channel.channel.id, '333333333333333333');
-
-  const unban = await text.parseOptions(textMessage, defsOf('unban'), text.tokenize('<@111111111111111111> appeal'));
-  assert.equal(unban.values.user_id, '111111111111111111');
-  assert.equal(unban.values.reason, 'appeal');
-
-  const mass = await text.parseOptions(textMessage, defsOf('massban'), text.tokenize('<@111111111111111111> 222222222222222222 spam and eggs'));
-  assert.equal(mass.values.ids, '111111111111111111 222222222222222222');
-  assert.equal(mass.values.reason, 'spam and eggs');
-
-  assert.equal(text.usage('k', 'ban', null, defsOf('ban')), 'kban <user> [reason] [delete_days]');
+  await repo.setRaid('gv2', { min_account_age_days: 30 });
+  const young = {
+    id: 'young', user: { id: 'young', createdTimestamp: Date.now() - 86400000 },
+    roles: { cache: new Map(), add: async () => {} },
+  };
+  const gated = interaction({ ...base, member: young, user: young.user });
+  await verification.handle(gated.i);
+  assert.match(plain(gated.sink.replied), /at least 30 days/);
 });
 
-test('text commands: khelp and kping reply publicly with V2 payloads', async () => {
-  const { guild, addMember } = fakeGuild({ id: 'gtextcmd', ownerId: 'owner' });
+test('verification: remove deletes the panel and disables verification', async () => {
+  const { guild } = await verificationGuild('gv3');
+  await repo.setVerification('gv3', { panel_channel_id: 'vc1', panel_message_id: 'vm1', role_id: 'vr1', enabled: 1 });
+  const deleted = [];
+  guild.channels.cache.get('vc1').messages.fetch = async () => ({ delete: async () => { deleted.push('vm1'); } });
+  const { i } = interaction({
+    guild, member: guild.members.cache.get('owner'), user: { id: 'owner' },
+    values: { commandName: 'verification' }, options: { subcommand: 'remove' },
+  });
+  await commands.get('verification').execute(i);
+  assert.deepEqual(deleted, ['vm1']);
+  assert.equal((await repo.getVerification('gv3')).enabled, 0);
+});
+
+// ---------------------------------------------------------------------------
+// tickets
+// ---------------------------------------------------------------------------
+async function ticketGuild(id = 'gt') {
+  const created = [];
+  const sent = [];
+  const channel = {
+    id: 'panelch', name: 'support', type: ChannelType.GuildText, isTextBased: () => true,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (payload) => { sent.push(payload); return { id: 'panelm' }; },
+    messages: { fetch: async () => null },
+  };
+  let next = 0;
+  const { guild } = fakeGuild({
+    id,
+    channels: {
+      cache: new Map([['panelch', channel]]), fetch: async () => channel,
+      create: async (opts) => {
+        next++;
+        const ch = {
+          id: `tchan${next}`, name: opts.name, type: ChannelType.GuildText, isTextBased: () => true,
+          permissionOverwrites: { values: opts.permissionOverwrites, edit: async () => {} },
+          send: async (payload) => { sent.push(payload); return { id: `tm${next}` }; },
+          delete: async () => {}, messages: { fetch: async () => new Collection() },
+        };
+        created.push({ ch, opts });
+        guild.channels.cache.set(ch.id, ch);
+        return ch;
+      },
+    },
+  });
+  guild.client = fakeClient([guild]);
+  guild.members.me = { id: 'kurisu', roles: { highest: { position: 50 } }, permissions: bits(PermissionsBitField.All) };
+  const owner = {
+    id: 'owner', user: { id: 'owner', tag: 'owner#0001' },
+    permissions: bits(PermissionsBitField.Flags.Administrator),
+    roles: { cache: new Map(), highest: { position: 20 } },
+  };
+  const staff = {
+    id: 'staff', user: { id: 'staff', tag: 'staff#0001' },
+    permissions: bits(0), roles: { cache: new Map([['staffrole', { id: 'staffrole' }]]), highest: { position: 10 } },
+  };
+  guild.members.cache.set('owner', owner);
+  guild.members.cache.set('staff', staff);
+  guild.roles.cache.set('staffrole', role('staffrole', 10));
+  await repo.setGuild(id, 'antinuke_enabled', 1);
+  await repo.setTicketConfig(id, { staff_role_id: 'staffrole', max_open: 2 });
+  await repo.warmGuild(id);
+  return { guild, channel, created, sent, owner, staff };
+}
+
+test('tickets: panel, private channel creation, numbering and max-open', async () => {
+  const { guild, channel, created, sent } = await ticketGuild('gt1');
+  const owner = guild.members.cache.get('owner');
+  const panelCmd = commands.get('ticket');
+  const panel = interaction({ guild, member: owner, user: owner.user, values: { commandName: 'ticket' }, options: { subcommand: 'panel', channel } });
+  await panelCmd.execute(panel.i);
+  assert.equal(sent.length, 1);
+  assert.equal(buttonNodes(sent[0])[0].custom_id, 'kt:new:panel');
+  const cfg = await repo.getTicketConfig('gt1');
+  assert.equal(cfg.panel_message_id, 'panelm');
+  assert.equal(cfg.panel_channel_id, 'panelch');
+
+  const create = interaction({ guild, member: owner, user: owner.user, customId: 'kt:new:panel', channelId: 'panelch' });
+  await tickets.handle(create.i);
+  assert.equal(created.length, 1);
+  assert.equal(created[0].opts.name, 'ticket-1');
+  const everyone = created[0].opts.permissionOverwrites.find((o) => o.id === 'gt1');
+  assert.ok(everyone.deny.includes(PermissionsBitField.Flags.ViewChannel));
+  const own = created[0].opts.permissionOverwrites.find((o) => o.id === 'owner');
+  assert.ok(own.allow.includes(PermissionsBitField.Flags.ViewChannel));
+  assert.equal((await repo.getTicket('gt1', 1)).channel_id, 'tchan1');
+
+  await tickets.handle(interaction({ guild, member: owner, user: owner.user, customId: 'kt:new:panel', channelId: 'panelch' }).i);
+  const third = interaction({ guild, member: owner, user: owner.user, customId: 'kt:new:panel', channelId: 'panelch' });
+  await tickets.handle(third.i);
+  assert.match(plain(third.sink.replied), /already have 2 open ticket/);
+});
+
+test('tickets: close confirmation, claim, add/remove and staff-only list', async () => {
+  const { guild, created } = await ticketGuild('gt2');
+  const owner = guild.members.cache.get('owner');
+  const staff = guild.members.cache.get('staff');
+  await repo.createTicket('gt2', { number: 1, channelId: 'tchan1', ownerId: 'owner' });
+  const ticketChannel = {
+    id: 'tchan1', name: 'ticket-1', isTextBased: () => true, messages: { fetch: async () => new Collection() },
+    permissionOverwrites: { edit: async (id, perms) => { ticketChannel.edits.push([id, perms]); } },
+    edits: [], send: async () => ({}), delete: async () => {},
+  };
+  guild.channels.cache.set('tchan1', ticketChannel);
+
+  const claim = interaction({ guild, member: staff, user: staff.user, customId: 'kt:claim:1', channelId: 'tchan1' });
+  await tickets.handle(claim.i);
+  assert.equal((await repo.getTicket('gt2', 1)).claimed_by, 'staff');
+
+  const add = interaction({
+    guild, member: staff, user: staff.user, channel: ticketChannel, channelId: 'tchan1',
+    values: { commandName: 'ticket' }, options: { subcommand: 'add', user: { id: 'friend', user: { id: 'friend' } } },
+  });
+  await commands.get('ticket').execute(add.i);
+  assert.deepEqual(ticketChannel.edits.at(-1), ['friend', { ViewChannel: true, SendMessages: true, ReadMessageHistory: true, AttachFiles: true }]);
+
+  const close = interaction({ guild, member: owner, user: owner.user, channel: ticketChannel, channelId: 'tchan1', values: { commandName: 'ticket' }, options: { subcommand: 'close' } });
+  await commands.get('ticket').execute(close.i);
+  assert.match(plain(close.sink.replied), /Close ticket \*\*#1\*\*/);
+
+  const confirm = interaction({ guild, member: owner, user: owner.user, customId: 'kt:closeok:1', channel: ticketChannel, channelId: 'tchan1' });
+  await tickets.handle(confirm.i);
+  assert.equal((await repo.getTicket('gt2', 1)).state, 'closed');
+
+  const list = interaction({ guild, member: staff, user: staff.user, values: { commandName: 'ticket' }, options: { subcommand: 'list' } });
+  await commands.get('ticket').execute(list.i);
+  assert.match(plain(list.sink.replied), /OPEN TICKETS/);
+  assert.equal(created.length, 0);
+});
+
+test('tickets: closing by number from another channel targets only the ticket channel', async () => {
+  const { guild } = await ticketGuild('gt3');
+  const staff = guild.members.cache.get('staff');
+  await repo.createTicket('gt3', { number: 2, channelId: 'tchan2', ownerId: 'owner' });
+  const sent = [];
+  const ticketChannel = {
+    id: 'tchan2', name: 'ticket-2', isTextBased: () => true, messages: { fetch: async () => new Collection() },
+    permissionOverwrites: { edit: async () => {} }, send: async (p) => { sent.push(p); return {}; }, delete: async () => {},
+  };
+  const other = {
+    id: 'other', name: 'general', isTextBased: () => true, messages: { fetch: async () => new Collection() },
+    permissionOverwrites: { edit: async () => {} }, send: async () => { throw new Error('wrong channel targeted'); }, delete: async () => { throw new Error('wrong channel deleted'); },
+  };
+  guild.channels.cache.set('tchan2', ticketChannel);
+  guild.channels.cache.set('other', other);
+
+  const close = interaction({
+    guild, member: staff, user: staff.user, channelId: 'other',
+    values: { commandName: 'ticket' }, options: { subcommand: 'close', ticket: 2 },
+  });
+  await commands.get('ticket').execute(close.i);
+  assert.match(plain(close.sink.replied), /Close ticket \*\*#2\*\*/);
+  const confirm = interaction({ guild, member: staff, user: staff.user, customId: 'kt:closeok:2', channelId: 'other' });
+  await tickets.handle(confirm.i);
+  assert.equal((await repo.getTicket('gt3', 2)).state, 'closed');
+  assert.equal(sent.length, 1, 'the ticket channel received the close notice');
+});
+
+// ---------------------------------------------------------------------------
+// premium + guild-member profile
+// ---------------------------------------------------------------------------
+test('premium: bot-owner enable/disable and expiry sweep resets the guild profile', async () => {
+  const gid = '123456789012345678';
+  const { guild } = fakeGuild({ id: gid });
+  guild.client = fakeClient([guild]);
+  const owner = { id: 'botowner', user: { id: 'botowner' }, permissions: bits(PermissionsBitField.Flags.Administrator) };
+  const cmd = commands.get('premium');
+  const enable = interaction({
+    guild, member: owner, user: owner.user, client: guild.client,
+    values: { commandName: 'premium' }, options: { subcommand: 'enable', guild_id: gid, days: 2 },
+  });
+  await cmd.execute(enable.i);
+  const row = await repo.getPremium(gid);
+  assert.ok(row);
+  assert.equal(row.enabled_by, 'botowner');
+
+  const nonOwner = interaction({
+    guild, member: { id: 'rando', permissions: bits(0) }, user: { id: 'rando' },
+    values: { commandName: 'premium' }, options: { subcommand: 'enable' },
+  });
+  await cmd.execute(nonOwner.i);
+  assert.match(plain(nonOwner.sink.replied), /bot owner/);
+
+  const edits = [];
+  guild.members.editMe = async (opts) => { edits.push(opts); };
+  await repo.setBotProfile(gid, { avatar: 1 });
+  await db.get().collection('premium').updateOne({ guild_id: gid }, { $set: { expires_at: Date.now() - 1 } });
+  await premiumEngine.sweep(guild.client);
+  assert.equal(await repo.getBotProfile(gid), null);
+  assert.equal(edits.at(-1).avatar, null);
+  assert.equal(edits.at(-1).banner, null);
+  assert.equal(await repo.getPremium(gid), null, 'expired premium is not active');
+});
+
+test('premium: lazy expiry clears the cosmetic guild profile', async () => {
+  const { guild } = fakeGuild({ id: 'gp3' });
+  const edits = [];
+  guild.members.editMe = async (opts) => { edits.push(opts); };
+  await repo.setPremium('gp3', { expiresAt: Date.now() + 60_000 });
+  await repo.setBotProfile('gp3', { avatar: 1, banner: 1 });
+  await repo.setPremium('gp3', { expiresAt: Date.now() - 1 });
+  assert.equal(await premiumEngine.active(guild), false);
+  assert.equal(await repo.getBotProfile('gp3'), null);
+  assert.equal(edits.length, 1);
+  assert.equal(edits[0].avatar, null);
+  assert.equal(edits[0].banner, null);
+});
+
+test('profile: validates image bytes and stores only flags', async () => {
+  const { guild } = fakeGuild({ id: 'gp2' });
+  guild.client = fakeClient([guild]);
+  guild.members.editMe = async (opts) => { guild.profileEdit = opts; };
+  await repo.setPremium('gp2', { expiresAt: Date.now() + 86400000 });
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, headers: { get: () => String(png.length) }, arrayBuffer: async () => png });
+  try {
+    const owner = { id: 'owner', user: { id: 'owner' }, permissions: bits(PermissionsBitField.Flags.Administrator) };
+    const avatar = interaction({
+      guild, member: owner, user: owner.user, client: guild.client,
+      values: { commandName: 'botprofile' }, options: { subcommand: 'avatar', url: 'https://example.com/a.png' },
+    });
+    await commands.get('botprofile').execute(avatar.i);
+    assert.ok(Buffer.isBuffer(guild.profileEdit.avatar));
+    const stored = await repo.getBotProfile('gp2');
+    assert.equal(stored.avatar, 1);
+    assert.equal(stored.banner, undefined, 'only a flag is stored, never image data');
+  } finally { global.fetch = originalFetch; }
+
+  const { imageKind } = require('../src/commands/premium/botprofile');
+  assert.equal(imageKind(Buffer.from([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0])), 'jpg');
+  assert.equal(imageKind(Buffer.from([0x47, 0x49, 0x46, 0x38, 0, 0, 0, 0, 0, 0, 0, 0])), 'gif');
+  assert.equal(imageKind(Buffer.from('RIFF0000WEBP')), 'webp');
+  assert.equal(imageKind(Buffer.from('not an image')), null);
+});
+
+test('dashboard: premium line is read-only and security navigation stays grey', async () => {
+  const { guild } = fakeGuild({ id: 'gdash' });
+  guild.client = fakeClient([guild]);
+  await repo.setPremium('gdash', { expiresAt: Date.now() + 86400000 });
+  const { i, sink } = dashInteraction(guild);
+  await dashboard.handle(i);
+  assert.ok(sink.updated);
+  assert.match(plain(sink.updated), /Premium/);
+  assert.ok(!componentIds(sink.updated).some((id) => /premium/i.test(id)), 'premium is not a dashboard button');
+  assert.ok(buttonNodes(sink.updated).every((b) => b.style === 2));
+});
+
+// ---------------------------------------------------------------------------
+// UI, commands, help, text
+// ---------------------------------------------------------------------------
+test('UI: every new panel is Components V2, grey-only, accent-free and free of Unicode emoji', async () => {
+  const sourcePanels = [verification.panelItems(), tickets.panelItems()];
+  for (const items of sourcePanels) {
+    const payload = ui.message(items);
+    assert.ok(Number(payload.flags) & MessageFlags.IsComponentsV2);
+    assert.equal(Number(payload.flags) & MessageFlags.Ephemeral, 0);
+    const nodes = allNodes(payload);
+    assert.ok(!nodes.some((n) => n.embeds), 'no embeds');
+    assert.ok(!nodes.some((n) => 'accent_color' in n), 'no accent colour');
+    assert.ok(buttonNodes(payload).every((b) => b.style === 2), 'only secondary buttons');
+    assert.ok(!/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(plain(payload)), 'no Unicode emoji');
+  }
+});
+
+test('source regression: no Unicode emoji, raw embeds or accent colours outside the registry', () => {
+  const emoji = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
+  const files = [];
+  const walkDir = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkDir(p);
+      else if (p.endsWith('.js') && !p.endsWith('emojis.js')) files.push(p);
+    }
+  };
+  walkDir(path.join(__dirname, '..', 'src'));
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    assert.ok(!emoji.test(source), `${file} contains a Unicode emoji`);
+    assert.ok(!/accentColor|accent_color/i.test(source), `${file} sets an accent colour`);
+    assert.ok(!/\bembed\s*:/i.test(source), `${file} sends a raw embed`);
+  }
+});
+
+test('commands: every required top-level command exists and loads with a category', () => {
+  const required = ['ban', 'unban', 'kick', 'timeout', 'untimeout', 'warn', 'warnings', 'purge', 'clear', 'slowmode', 'lock', 'unlock', 'hide', 'unhide', 'nickname', 'role', 'softban', 'massban', 'masskick', 'case', 'banlist', 'whitelist', 'security', 'antinuke', 'incidents', 'watchlist', 'guilds', 'prefix', 'help', 'ping', 'serverinfo', 'userinfo', 'dev', 'verification', 'ticket', 'premium', 'botprofile'];
+  for (const name of required) assert.ok(commands.has(name), `missing /${name}`);
+  assert.equal(commands.size, 42);
+  assert.deepEqual(commands.get('ticket').data.toJSON().options.map((o) => o.name), ['panel', 'setup', 'close', 'add', 'remove', 'claim', 'list']);
+  assert.deepEqual(commands.get('premium').data.toJSON().options.map((o) => o.name), ['enable', 'disable', 'list']);
+  assert.ok(commands.get('verification').data.toJSON().options.some((o) => o.name === 'panel'));
+});
+
+test('help: generated from real command definitions and covers tickets, premium and profile', () => {
+  const entries = help.collect(commands);
+  assert.ok(entries.length >= 70);
+  for (const name of ['ticket.panel', 'ticket.setup', 'verification.panel', 'verification.config', 'premium.enable', 'premium.list', 'botprofile.avatar']) {
+    assert.ok(entries.some((e) => e.key === name), `missing help entry ${name}`);
+  }
+  assert.ok(help.CATEGORIES.tickets && help.CATEGORIES.premium);
+  const rendered = help.mainView('owner', '!');
+  const payload = ui.message(rendered);
+  assert.ok(buttonNodes(payload).every((b) => b.style === 2));
+});
+
+test('text commands: help and ping reply with V2 payloads through the prefix pipeline', async () => {
+  const { guild, addMember } = fakeGuild({ id: 'gtextcmd2', ownerId: 'owner' });
   const member = addMember('owner');
   member.permissions = { has: () => true };
-  const client = {
-    commands,
-    users: { cache: new Map(), fetch: async () => null },
-    ws: { ping: 42, shards: { size: 1 } },
-    user: { id: 'kurisu', displayAvatarURL: () => 'https://example.com/a.png' },
-    guilds: { cache: new Map([[guild.id, guild]]) },
-  };
-  guild.client = client;
+  member.user = { id: 'owner', bot: false, tag: 'owner#0001', username: 'owner' };
+  const client = fakeClient([guild]);
   const sent = [];
   const message = {
     guild, member, client, content: 'khelp',
@@ -417,757 +833,55 @@ test('text commands: khelp and kping reply publicly with V2 payloads', async () 
     channel: { id: 'c1', name: 'general', permissionsFor: () => ({ has: () => true }) },
     reply: async (payload) => { sent.push(payload); return { edit: async () => {} }; },
   };
-  repo.setGuild(guild.id, 'prefix', 'k');
-  text.clearPrefix(guild.id);
-
-  assert.equal(await text.handle(message, client), true);
-  assert.equal(sent.length, 1);
-  assert.ok(Number(sent[0].flags) & MessageFlags.IsComponentsV2);
-  assert.equal(Number(sent[0].flags) & MessageFlags.Ephemeral, 0, 'text replies cannot be ephemeral');
-
-  sent.length = 0; message.content = 'kping';
-  assert.equal(await text.handle(message, client), true);
-  assert.equal(sent.length, 1);
-  assert.ok(Number(sent[0].flags) & MessageFlags.IsComponentsV2);
-
-  sent.length = 0; message.content = 'kinda';
-  assert.equal(await text.handle(message, client), false, 'unknown words starting with the prefix are ignored');
-  assert.equal(sent.length, 0);
-
-  sent.length = 0; message.content = 'kprefix';
-  assert.equal(await text.handle(message, client), true);
-  assert.equal(sent.length, 1);
-
-  repo.setGuild(guild.id, 'prefix', '!');
-  text.clearPrefix(guild.id);
-});
-
-test('commands: all required slash commands exist', () => {
-  const required = ['ban', 'unban', 'kick', 'timeout', 'untimeout', 'warn', 'warnings', 'purge', 'clear', 'slowmode', 'lock', 'unlock', 'hide', 'unhide', 'nickname', 'role', 'softban', 'massban', 'masskick', 'case', 'banlist', 'whitelist', 'security', 'antinuke', 'incidents', 'watchlist', 'guilds', 'prefix', 'help', 'ping', 'serverinfo', 'userinfo', 'dev'];
-  for (const r of required) assert.ok(commands.has(r), `missing /${r}`);
-  const wl = commands.get('whitelist').data.toJSON().options.map((o) => o.name).sort();
-  assert.deepEqual(wl, ['add', 'check', 'list', 'remove']);
-  const role = commands.get('role').data.toJSON().options.map((o) => o.name).sort();
-  assert.deepEqual(role, ['add', 'remove']);
-  const antinukeSubs = commands.get('antinuke').data.toJSON().options.map((o) => o.name).sort();
-  assert.deepEqual(antinukeSubs, ['disable', 'enable', 'status']);
-  const caseSubs = commands.get('case').data.toJSON().options.map((o) => o.name).sort();
-  assert.deepEqual(caseSubs, ['user', 'view']);
-  const watchSubs = commands.get('watchlist').data.toJSON().options.map((o) => o.name).sort();
-  assert.deepEqual(watchSubs, ['add', 'list', 'remove']);
-});
-
-test('guilds: owner-only network overview with totals and per-server counts', async () => {
-  const cmd = commands.get('guilds');
-  const rows = [
-    { id: '111111111111111111', name: 'Alpha', members: 1200, active: 80 },
-    { id: '222222222222222222', name: 'Beta', members: 300, active: 12 },
-  ];
-  const text = cmd.render({ at: Date.now(), rows, totals: { servers: 2, members: 1500, active: 92 } }, 0, 'botowner')
-    .filter((x) => typeof x === 'string').join('\n');
-  assert.match(text, /KURISU NETWORK/);
-  assert.match(text, /Servers\s+\*\*2\*\*/);
-  assert.match(text, /Active Users\s+\*\*92\*\*/);
-  assert.match(text, /Total Members\s+\*\*1,500\*\*/);
-  assert.match(text, /Alpha/);
-  assert.match(text, /1,200 members/);
-
-  assert.match(JSON.stringify(cmd.render({ at: Date.now(), rows, totals: { servers: 2, members: 1500, active: 92 } }, 0, 'botowner')), /kg:botowner:r:0/);
-
-  const denied = fakeInteraction({ customId: 'guilds', user: { id: 'rando' } });
-  await cmd.execute(denied);
-  assert.ok(denied.calls.replied);
-  assert.ok(JSON.stringify(denied.calls.replied).includes('Only the bot owner'));
-});
-
-test('guilds: component acknowledges before refreshing and keeps its page', async () => {
-  const cmd = commands.get('guilds');
-  const calls = { deferred: false, edited: null };
-  const interaction = {
-    customId: 'kg:botowner:r:0',
-    user: { id: 'botowner' },
-    client: { guilds: { cache: new Map() } },
-    deferUpdate: async () => { calls.deferred = true; },
-    editReply: async (payload) => { calls.edited = payload; },
-    reply: async (payload) => { calls.edited = payload; },
-  };
-  await cmd.component(interaction);
-  assert.equal(calls.deferred, true, 'component ACK happens before the network fetch');
-  assert.match(JSON.stringify(calls.edited), /KURISU NETWORK/);
-  assert.match(JSON.stringify(calls.edited), /kg:botowner:r:0/);
-});
-
-test('help: generated from real command definitions, covers every command', () => {
-  const entries = help.collect(commands);
-  for (const [name, cmd] of commands) {
-    const subs = cmd.data.toJSON().options.filter((o) => o.type === 1);
-    if (subs.length) for (const s of subs) assert.ok(entries.some((e) => e.key === `${name}.${s.name}`), `${name} ${s.name} missing from help`);
-    else assert.ok(entries.some((e) => e.key === name), `${name} missing from help`);
-  }
-  for (const e of entries) assert.ok(help.CATEGORIES[e.category], `${e.key} has unknown category ${e.category}`);
-  const ban = entries.find((e) => e.key === 'ban');
-  assert.match(help.detailView('1', entries, 'ban', 'moderation', 0).join('\n'), /USAGE[\s\S]*\/ban user:<member> reason:<text>/);
-
-  const custom = help.collect(commands, '?');
-  const customBan = custom.find((e) => e.key === 'ban');
-  assert.equal(customBan.textExample, '?ban user:@member reason:Spam');
-  assert.match(help.detailView('1', custom, 'ban', 'moderation', 0, '?').join('\n'), /TEXT EXAMPLE[\s\S]*\?ban/);
-  assert.match(help.mainView('1', '?').join('\n'), /Text prefix: `\?`/);
-});
-
-test('UI: Components V2, grey buttons only, no accent colour, valid payloads', () => {
-  const entries = help.collect(commands);
-  const g = { id: 'g1', ownerId: 'owner', client: { user: { id: 'kurisu' } } };
-  const views = [help.mainView('1'), ...Object.keys(help.CATEGORIES).map((c) => help.categoryView('1', entries, c, 0)),
-    ...entries.map((e) => help.detailView('1', entries, e.key, e.category, 0)),
-    ...['main', 'prot', 'wl:bypass', 'logs:0', 'set', 'set:antinuke', 'raid', ...KEYS.map((k) => `mod:${k}`)].map((r) => dashboard.route(g, r))];
-  for (const v of views) {
-    const payload = ui.edit(v);
-    const json = payload.components[0].toJSON();
-    assert.equal(json.type, 17);
-    assert.equal(json.accent_color, undefined, 'no accent colour');
-    for (const node of walk(json)) {
-      if (node.type === 2) assert.equal(node.style, 2, 'only secondary buttons');
-      if (node.type === 3) assert.ok(node.options.length <= 25);
-    }
-    assert.ok(Number(payload.flags) & (1 << 15), 'IsComponentsV2 flag');
-  }
-});
-
-/**
- * Every piece of text a dashboard view renders, including section bodies.
- * main() puts the header in a section object (banner + title), so filtering for
- * plain strings alone would silently miss the title.
- */
-const viewText = (items) => items.map((x) => {
-  if (typeof x === 'string') return x;
-  if (x && x.section) return x.section;
-  if (x && typeof x.toJSON === 'function') {
-    return walk(x.toJSON()).map((n) => (typeof n.content === 'string' ? n.content : '')).join('\n');
-  }
-  return '';
-}).join('\n');
-
-const mainOf = (id) => ({ id, ownerId: 'owner', client: { user: { id: 'kurisu' } }, name: 'Test Server' });
-const mainText = (id) => viewText(dashboard.main(mainOf(id)));
-
-test('UI: dashboard shows real database values', () => {
-  repo.ensureGuild('gd'); repo.setGuild('gd', 'antinuke_enabled', 1);
-  repo.addWhitelist('gd', 'u1', 'bypass', 'owner'); repo.addWhitelist('gd', 'u2', 'bypass', 'owner');
-  repo.addIncident('gd', { executorId: 'x', module: 'massBan', action: 'Member Ban Add', count: 3, threshold: 3, response: 'Banned', status: 'Neutralized' });
-  repo.saveModule('gd', 'massBan', { enabled: false, threshold: 3, window_sec: 15, punishment: 'ban' });
-  const text = mainText('gd');
-  assert.match(text, /KURISU SECURITY CENTER/);
-  assert.match(text, /27 of 28 modules armed\s+·\s+1 off/);
-  assert.match(text, /\*\*Whitelist\*\*\n-# 2 entries/);
-  assert.match(text, /\*\*Incidents\*\*\n-# 1 logged/);
-});
-
-test('UI: security center leads with one verdict, not repeated status lines', () => {
-  repo.ensureGuild('gm1'); repo.setGuild('gm1', 'antinuke_enabled', 1);
-  const healthy = mainText('gm1');
-  assert.match(healthy, /All 28 modules armed/, 'all-on is a positive verdict');
-  assert.equal((healthy.match(/\*\*Antinuke\*\*/g) || []).length, 1, 'antinuke is stated once');
-  assert.match(healthy, /\*\*Antinuke\*\*\n-# [^\n]*On/, 'antinuke state sits under its own label');
-  assert.ok(!/Security Rules/.test(healthy), 'the ambiguous "Security Rules" line is gone');
-  assert.ok(!/28 \/ 28/.test(healthy), 'no padded x / x counters');
-  assert.match(healthy, /\*\*Nuke Watch\*\*\s+·\s+0 executors/);
-  assert.match(healthy, /\*\*Last Incident\*\*\s+·\s+None yet/);
-
-  repo.saveModule('gm1', 'massBan', { enabled: false, threshold: 3, window_sec: 15, punishment: 'ban' });
-  assert.match(mainText('gm1'), /27 of 28 modules armed\s+·\s+1 off/, 'partial protection warns');
-
-  repo.setGuild('gm1', 'antinuke_enabled', 0);
-  assert.match(mainText('gm1'), /\*\*Antinuke is off\*\* - this server is unprotected/, 'off is the loudest state');
-});
-
-test('UI: dashboard copy uses only registry emoji, never Unicode emoji', () => {
-  // Any emoji in a card must be a <:name:id> custom emoji from config/emojis.js.
-  // Discord's Unicode emoji live in astral planes (U+1F000+), dingbats (U+2700-27BF),
-  // misc symbols/arrows (U+2190-23FF), regional flags and variation selectors.
-  const UNICODE_EMOJI = /[\u2190-\u21FF\u2300-\u23FF\u2460-\u24FF\u25A0-\u27BF\u2B00-\u2BFF\uFE0F\u200D]|[\u{1F000}-\u{1FAFF}]/u;
-  const g = mainOf('gemo');
-  const views = ['main', 'set', 'raid', 'prot:0', 'wl:trusted_mod', 'diag', 'logs:0'].map((r) => dashboard.route(g, r));
-  for (const items of views) {
-    const nodes = walk(ui.edit(items).components[0].toJSON());
-    for (const n of nodes) {
-      const texts = [n.content, n.label, n.placeholder, n.description].filter((t) => typeof t === 'string');
-      for (const t of texts) assert.ok(!UNICODE_EMOJI.test(t), `Unicode emoji in: ${t}`);
-    }
-    // Every custom emoji mentioned must exist in the registry.
-    const raw = JSON.stringify(nodes);
-    for (const m of raw.matchAll(/<(a?):(\w+):(\d+)>/g)) {
-      assert.ok(Object.values(EMOJIS).includes(m[0]), `emoji ${m[2]} is not in the registry`);
-    }
-  }
-});
-
-test('UI: security center navigation is a full grid with no lone button', () => {
-  const rows = dashboard.main(mainOf('gm2'))
-    .filter((x) => x && typeof x.toJSON === 'function')
-    .map((row) => row.toJSON())
-    .filter((row) => row.components?.some((c) => c.type === 2));
-  assert.equal(rows.length, 3, 'three action rows');
-  const labels = rows.map((row) => row.components.map((c) => c.label).join('+'));
-  assert.deepEqual(labels, ['Protection+Whitelist', 'Logs+Settings', 'Diagnostics']);
-  for (const row of rows) {
-    for (const c of row.components) {
-      assert.equal(c.style, 2, 'grey buttons only');
-      assert.ok(c.emoji && (c.emoji.id || c.emoji.name), 'every nav button has an emoji');
-      assert.ok(!/^<a?:\w+:\d+>/.test(c.label || ''), 'button labels must not contain raw emoji markup');
-    }
-  }
-});
-
-const fakeInteraction = (over = {}) => {
-  const calls = { updated: null, replied: null };
-  return {
-    calls,
-    customId: 'ks:v:main', guild: { id: 'gi', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } },
-    member: { id: 'rando', permissions: { has: () => true } }, user: { id: 'rando' }, values: [],
-    isFromMessage: () => false, isMessageComponent: () => true,
-    update: async (p) => { calls.updated = p; }, reply: async (p) => { calls.replied = p; },
-    ...over,
-  };
-};
-
-test('dashboard: protection modules paginate and keep the page', async () => {
-  const g = { id: 'gp', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } };
-  const p2 = dashboard.protection(g, 1).filter((x) => typeof x === 'string').join('\n');
-  assert.match(p2, /page 2\/3/);
-  assert.ok(JSON.stringify(ui.edit(dashboard.protection(g, 1))).includes('ks:pick:1'));
-
-  const owner = { id: 'owner', permissions: { has: () => true } };
-  const pick = fakeInteraction({ customId: 'ks:pick:1', member: owner, user: owner, guild: g, values: [KEYS[10]] });
-  await dashboard.handle(pick);
-  assert.ok(pick.calls.updated);
-  assert.ok(JSON.stringify(pick.calls.updated).includes('ks:v:prot:1'), 'module view keeps its page for Back');
-});
-
-test('antinuke: status view is grouped into clean sections', () => {
-  repo.ensureGuild('ga');
-  const text = commands.get('antinuke').statusView({ id: 'ga', ownerId: 'owner', client: { user: { id: 'kurisu' } } })
-    .filter((x) => typeof x === 'string').join('\n');
-  assert.match(text, /\*\*Status\*\*/);
-  assert.match(text, /\*\*Modules\*\*/);
-  assert.match(text, /\*\*Nuke Guard\*\*/);
-  assert.match(text, /\*\*Nuke Watch\*\*/);
-  assert.match(text, /\*\*Incidents \(24h\)\*\*/);
-});
-
-test('dashboard: settings lists only configured log channels and names the rest', () => {
-  const g = { id: 'gset', ownerId: 'owner', client: { user: { id: 'kurisu' } } };
-  repo.ensureGuild('gset');
-  repo.setLogChannel('gset', 'antinuke', 'c1');
-  const view = dashboard.settings(g).filter((x) => typeof x === 'string').join('\n');
-  assert.match(view, /Log Channels\*\*\s+·\s+\*\*1\/9\*\* configured/);
-  assert.match(view, /Antinuke\s+·\s+<#c1>/);
-  assert.match(view, /Not set: Raid/);
-  repo.setLogChannel('gset', 'antinuke', null);
-});
-
-test('authorization: dashboard rejects unauthorised users on every interaction type', async () => {
-  for (const id of ['ks:v:main', 'ks:tog:massBan', 'ks:pun:massBan', 'ks:master:antinuke', 'ks:lclr:antinuke', 'ks:v:raid']) {
-    const i = fakeInteraction({ customId: id, values: ['ban'] });
-    await dashboard.handle(i);
-    assert.ok(i.calls.replied, `${id} should be refused`);
-    assert.equal(i.calls.updated, null, `${id} must not update`);
-  }
-  assert.equal(repo.getModule('gi', 'massBan', MODULES).enabled, 1, 'config unchanged');
-});
-
-test('authorization: owner can configure and changes persist', async () => {
-  const owner = { id: 'owner', permissions: { has: () => true } };
-  const i = fakeInteraction({ customId: 'ks:tog:massBan', member: owner, user: owner });
-  await dashboard.handle(i);
-  assert.ok(i.calls.updated);
-  assert.equal(repo.getModule('gi', 'massBan', MODULES).enabled, 0);
-  const p = fakeInteraction({ customId: 'ks:pun:massBan', member: owner, user: owner, values: ['kick'] });
-  await dashboard.handle(p);
-  assert.equal(repo.getModule('gi', 'massBan', MODULES).punishment, 'kick');
-  const bad = fakeInteraction({ customId: 'ks:pun:massBan', member: owner, user: owner, values: ['nuke'] });
-  await dashboard.handle(bad);
-  assert.equal(repo.getModule('gi', 'massBan', MODULES).punishment, 'kick', 'invalid punishment rejected');
-});
-
-test('authorization: scoped role whitelist via dashboard', async () => {
-  const owner = { id: 'owner', permissions: { has: () => true } };
-  const role = { id: 'roleDash', name: 'Moderators' };
-  const gw = { id: 'gw', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } };
-  const mask = maskForScopes(['channelCreate']);
-  const add = fakeInteraction({
-    customId: `ks:wladdr:trusted_mod:${maskId(mask)}`, member: owner, user: owner, guild: gw,
-    roles: { first: () => role },
-  });
-  await dashboard.handle(add);
-  assert.ok(add.calls.updated, 'dashboard should update after adding a role');
-  const entry = repo.getWhitelist('gw', 'roleDash');
-  assert.equal(entry.target_type, 'role');
-  assert.deepEqual(JSON.parse(entry.scopes), ['channelCreate']);
-
-  const remove = fakeInteraction({
-    customId: 'ks:wlrmr:trusted_mod:0', member: owner, user: owner, guild: gw,
-    roles: { first: () => role },
-  });
-  await dashboard.handle(remove);
-  assert.ok(remove.calls.updated, 'dashboard should update after removing a role');
-  assert.equal(repo.getWhitelist('gw', 'roleDash'), undefined);
-});
-
-test('dashboard: whitelist scope chunks preserve the other chunk', async () => {
-  const owner = { id: 'owner', permissions: { has: () => true } };
-  const gw = { id: 'gw2', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } };
-  const base = fakeInteraction({ member: owner, user: owner, guild: gw });
-
-  // From "all modules", narrowing the second chunk must keep the first chunk selected.
-  const kept = KEYS.slice(0, 23).concat('threadDelete');
-  const narrowed = { ...base, customId: `ks:wlsc:trusted_mod:${maskId(ALL_MASK)}:1`, values: ['threadDelete'] };
-  await dashboard.handle(narrowed);
-  assert.ok(narrowed.calls.updated);
-  assert.ok(JSON.stringify(narrowed.calls.updated).includes(`ks:wladd:trusted_mod:${maskId(maskForScopes(kept))}`));
-
-  // A pre-selected "Level default" must not override module picks in the same submit.
-  const withDefault = { ...base, customId: `ks:wlsc:trusted_mod:${maskId(0n)}:0`, values: ['default', 'channelCreate'] };
-  await dashboard.handle(withDefault);
-  assert.ok(JSON.stringify(withDefault.calls.updated).includes(`ks:wladd:trusted_mod:${maskId(maskForScopes(['channelCreate']))}`));
-});
-
-test('authorization: help menu belongs to the user who opened it', async () => {
-  const client = { commands };
-  const other = fakeInteraction({ customId: 'kh:111:main', user: { id: '222' }, client });
-  await help.handle(other);
-  assert.ok(other.calls.replied); assert.equal(other.calls.updated, null);
-  const mine = fakeInteraction({ customId: 'kh:111:cat:moderation:0', user: { id: '111' }, client });
-  await help.handle(mine);
-  assert.ok(mine.calls.updated);
-});
-
-test('UI: every view fits Discord Components V2 limits', () => {
-  const entries = help.collect(commands);
-  const g = { id: 'gl', ownerId: 'owner', client: { user: { id: 'kurisu' } } };
-  const guildRows = Array.from({ length: 10 }, (_, n) => ({ id: `${n}`.padStart(18, '0'), name: `Guild ${n}`, members: 1000 - n, active: n }));
-  const views = [help.mainView('1'), ...Object.keys(help.CATEGORIES).flatMap((c) => [0, 1].map((p) => help.categoryView('1', entries, c, p))),
-    ...['main', 'prot', 'wl:bypass', 'logs:0', 'set', 'set:antinuke', 'raid'].map((r) => dashboard.route(g, r)),
-    commands.get('guilds').render({ at: Date.now(), rows: guildRows, totals: { servers: 10, members: 9955, active: 45 } }, 0, '1')];
-  for (const v of views) {
-    const nodes = walk(ui.edit(v).components[0].toJSON());
-    assert.ok(nodes.filter((x) => typeof x.type === 'number' && x.type <= 20).length <= 40, 'max 40 components');
-    assert.ok(nodes.filter((x) => x.type === 10).reduce((a, x) => a + x.content.length, 0) <= 4000, 'max 4000 text chars');
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Mocked interaction and engine coverage (P2 item 11)
-// ---------------------------------------------------------------------------
-
-test('banlist: renders bans and refuses other viewers', async () => {
-  const cmd = commands.get('banlist');
-  const guild = { id: 'b1', bans: { fetch: async () => new Map([['9', { user: { id: '9', username: 'bad' }, reason: 'raid' }]]) } };
-  const text = cmd.render(guild, [{ user: { id: '9', username: 'bad' }, reason: 'raid' }], 0, 'v1')
-    .filter((x) => typeof x === 'string').join('\n');
-  assert.match(text, /BAN LIST/);
-  assert.match(text, /bad/);
-  assert.match(text, /raid/);
-
-  const theirs = { customId: 'kb:someoneelse:0', user: { id: 'v1' }, memberPermissions: new PermissionsBitField(PermissionsBitField.Flags.BanMembers), reply: async (p) => { theirs._p = p; } };
-  await cmd.component(theirs);
-  assert.match(plainText(theirs._p), /not yours/);
-
-  const mine = {
-    customId: 'kb:v1:0', user: { id: 'v1' }, guild, memberPermissions: new PermissionsBitField(PermissionsBitField.Flags.BanMembers),
-    deferred: false, deferUpdate: async () => { mine.deferred = true; }, editReply: async (p) => { mine.edited = p; },
-    reply: async (p) => { mine.refused = p; },
-  };
-  await cmd.component(mine);
-  assert.equal(mine.deferred, true);
-  assert.match(plainText(mine.edited), /BAN LIST/);
-
-  const denied = { customId: 'kb:v1:0', user: { id: 'v1' }, guild, memberPermissions: new PermissionsBitField(0n), reply: async (p) => { denied.refused = p; } };
-  await cmd.component(denied);
-  assert.match(plainText(denied.refused), /You need Ban Members/);
-});
-
-test('incidents: paginates for managers and refuses other users', async () => {
-  const cmd = commands.get('incidents');
-  const gw = { id: 'inc1', ownerId: 'owner', client: { user: { id: 'kurisu' } } };
-  repo.addIncident('inc1', { executorId: 'x1', module: 'massBan', action: 'Member Ban Add', count: 3, threshold: 3, response: 'Banned', status: 'Neutralized' });
-  const text = cmd.render(gw, 0, 'owner').filter((x) => typeof x === 'string').join('\n');
-  assert.match(text, /SECURITY INCIDENTS/);
-  assert.match(text, /1 incident/);
-
-  const owner = { id: 'owner' };
-  const upd = { customId: 'kn:owner:0', guild: gw, member: owner, user: owner, update: async (p) => { upd.p = p; }, reply: async (p) => { upd.p = p; } };
-  await cmd.component(upd);
-  assert.match(plainText(upd.p), /SECURITY INCIDENTS/);
-
-  const other = { customId: 'kn:owner:0', guild: gw, member: owner, user: { id: 'intruder' }, reply: async (p) => { other.p = p; } };
-  await cmd.component(other);
-  assert.match(plainText(other.p), /not yours/);
-
-  const stranger = { customId: 'kn:other:0', guild: gw, member: { id: 'stranger', permissions: new PermissionsBitField(0n) }, user: { id: 'other' }, reply: async (p) => { stranger.p = p; } };
-  await cmd.component(stranger);
-  assert.match(plainText(stranger.p), /not authorised/);
-});
-
-test('raid: lockdown locks channels, writes state and unlock restores them', async () => {
-  const edited = [];
-  const ch = (id, state) => ({
-    id, type: ChannelType.GuildText, manageable: true,
-    permissionOverwrites: {
-      cache: state === 'neutral' ? new Map() : new Map([['g1', state === 'deny'
-        ? { deny: new PermissionsBitField(PermissionsBitField.Flags.SendMessages), allow: new PermissionsBitField(0n) }
-        : { deny: new PermissionsBitField(0n), allow: new PermissionsBitField(PermissionsBitField.Flags.SendMessages) }]]),
-      edit: async (_role, patch) => { edited.push([id, patch.SendMessages]); },
-    },
-  });
-  const { guild } = fakeGuild({
-    id: 'grl',
-    roles: { everyone: { id: 'g1' }, cache: new Map() },
-    channels: { cache: new Map([['c1', ch('c1', 'neutral')], ['c2', ch('c2', 'deny')], ['c3', ch('c3', 'allow')]]) },
-    verificationLevel: 0, features: [],
-    setVerificationLevel: async (lvl) => { guild.verificationLevel = lvl; },
-    disableInvites: async () => {},
-  });
-
-  const lock = await raid.lockdown(guild, 30, 'owner-id');
-  assert.equal(lock.ok, true);
-  assert.equal(lock.locked, 2, 'already-denied channel is skipped');
-  assert.equal(repo.getRaid('grl').lockdown_active, 1);
-  assert.deepEqual(repo.getLockedChannels('grl').map((r) => r.channel_id).sort(), ['__invites__', 'c1', 'c3']);
-  assert.deepEqual(edited, [['c1', false], ['c3', false]]);
-  assert.equal(guild.verificationLevel, GuildVerificationLevel.VeryHigh);
-
-  assert.equal((await raid.lockdown(guild, 30, 'owner-id')).ok, false, 'second lockdown refused');
-
-  const unlock = await raid.unlock(guild, 'owner-id');
-  assert.equal(unlock.ok, true);
-  const restored = new Map(edited.slice(2));
-  assert.equal(restored.get('c1'), null, 'neutral channel restored to neutral');
-  assert.equal(restored.get('c3'), true, 'allowed channel restored to allowed');
-  assert.equal(repo.getRaid('grl').lockdown_active, 0);
-  assert.equal(repo.getLockedChannels('grl').length, 0);
-  assert.equal((await raid.unlock(guild, 'owner-id')).ok, false, 'nothing left to unlock');
-});
-
-test('raid command: status, lockdown and unlock through the command', async () => {
-  const cmd = commands.get('raid');
-  const { guild } = fakeGuild({
-    id: 'grc', roles: { everyone: { id: 'g1' }, cache: new Map() }, channels: { cache: new Map() },
-    verificationLevel: 0, features: [], setVerificationLevel: async () => {}, disableInvites: async () => {},
-  });
-  const member = fakeMember(PermissionsBitField.Flags.Administrator, { guild });
-  const sink = {};
-  guild.ownerId = 'mod';
-  const opts = { sub: 'status', minutes: 30 };
-  const i = chatInput({
-    guild, member, sink,
-    options: { getSubcommand: () => opts.sub, getInteger: () => opts.minutes },
-  });
-  await cmd.execute(i);
-  assert.match(plainText(sink.replied), /RAID PROTECTION/);
-  assert.match(plainText(sink.replied), /NORMAL/);
-
-  opts.sub = 'lockdown';
-  await cmd.execute(i);
-  assert.equal(repo.getRaid('grc').lockdown_active, 1);
-  assert.match(plainText(sink.edited), /Lockdown enabled/);
-
-  opts.sub = 'unlock';
-  await cmd.execute(i);
-  assert.equal(repo.getRaid('grc').lockdown_active, 0);
-  assert.match(plainText(sink.edited), /Lockdown ended/);
-
-  guild.ownerId = 'someone-else'; // not the caller, who is a plain moderator
-  const denied = chatInput({ guild, member: fakeMember(0n, { guild }), sink: {}, options: { getSubcommand: () => 'status' } });
-  await commands.get('raid').execute(denied);
-  assert.match(plainText(denied.sink.replied), /Only the server owner/);
-  guild.ownerId = 'mod';
-});
-
-test('verification command: enable, status and disable', async () => {
-  const cmd = commands.get('verification');
-  const { guild } = fakeGuild({
-    id: 'gvf', roles: { everyone: { id: 'g1' }, cache: new Map() }, channels: { cache: new Map() },
-    verificationLevel: 0, setVerificationLevel: async (lvl) => { guild.verificationLevel = lvl; },
-  });
-  guild.ownerId = 'mod';
-  const member = fakeMember(PermissionsBitField.Flags.Administrator, { guild });
-  const opts = { sub: 'enable' };
-  const i = chatInput({ guild, member, sink: {}, options: { getSubcommand: () => opts.sub } });
-
-  await cmd.execute(i);
-  assert.equal(repo.getRaid('gvf').verification_active, 1);
-  assert.equal(guild.verificationLevel, GuildVerificationLevel.High);
-
-  opts.sub = 'status';
-  await cmd.execute(i);
-  assert.match(plainText(i.sink.replied), /Verification mode is \*\*on\*\*/);
-
-  opts.sub = 'disable';
-  await cmd.execute(i);
-  assert.equal(repo.getRaid('gvf').verification_active, 0);
-  assert.equal(guild.verificationLevel, 0, 'previous level restored');
-});
-
-test('recovery: deleted channels and roles are snapshotted and restored without dangerous permissions', async () => {
-  const events = [];
-  const overwrite = (id, allow, deny = 0n) => ({ id, type: 0, allow: new PermissionsBitField(allow), deny: new PermissionsBitField(deny) });
-  const source = {
-    id: 'c1', name: 'general', guild: { id: 'grec' }, isThread: () => false, type: ChannelType.GuildText,
-    parentId: null, rawPosition: 2, topic: 'hello', nsfw: false, rateLimitPerUser: 0,
-    permissionOverwrites: { cache: new Map([
-      ['g1', overwrite('g1', PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.Administrator)],
-      ['ghost', overwrite('ghost', PermissionsBitField.Flags.SendMessages)],
-    ]) },
-  };
-  const { guild } = fakeGuild({
-    id: 'grec',
-    roles: { everyone: { id: 'g1' }, cache: new Map([['g1', { id: 'g1', position: 0 }]]), create: async () => null },
-    channels: {
-      cache: new Map(), fetch: async () => null,
-      create: async (opts) => {
-        events.push(['channel', opts.name, opts.permissionOverwrites]);
-        const created = { ...source, id: 'c2', guild };
-        guild.channels.cache.set('c2', created);
-        return created;
-      },
-    },
-  });
-
-  recovery.snapshotChannel(source);
-  assert.equal(repo.getSnapshot('grec', 'channel', 'c1').data.name, 'general');
-  assert.match(await recovery.restoreChannel(guild, 'c1'), /^restored/);
-  assert.deepEqual(events[0].slice(0, 2), ['channel', 'general']);
-  const own = events[0][2].find((o) => o.id === 'g1');
-  assert.equal(own.allow & DANGEROUS_BITS, 0n, 'restored overwrites never regain dangerous permissions');
-  assert.ok(!events[0][2].some((o) => o.id === 'ghost'), 'overwrites for missing roles are dropped');
-  assert.equal(repo.getSnapshot('grec', 'channel', 'c1'), null, 'consumed snapshot is removed');
-  assert.match(await recovery.restoreChannel(guild, 'missing'), /^skipped/);
-
-  const roleSource = {
-    id: 'r1', name: 'Moderators', guild, color: 0xED4245, hoist: false, mentionable: false, managed: false,
-    position: 3, permissions: new PermissionsBitField(PermissionsBitField.Flags.BanMembers | PermissionsBitField.Flags.ManageChannels),
-  };
-  let createdRole = null;
-  guild.roles.create = async (opts) => { createdRole = opts; return { id: 'r9', setPosition: async () => {} }; };
-  recovery.snapshotRole(roleSource);
-  assert.match(await recovery.restoreRole(guild, 'r1'), /^restored/);
-  assert.equal(createdRole.name, 'Moderators');
-  assert.equal(createdRole.permissions.bitfield & DANGEROUS_BITS, 0n, 'dangerous role permissions are withheld');
-
-  const managed = { ...roleSource, id: 'r2', managed: true };
-  recovery.snapshotRole(managed);
-  assert.equal(repo.getSnapshot('grec', 'role', 'r2'), null, 'managed roles are never snapshotted');
-});
-
-test('recovery: webhooks, unapproved bots and invites are removed and recorded', async () => {
-  const removed = { webhooks: 0, bots: 0, invites: 0 };
-  const hook = { id: 'h1', delete: async () => { removed.webhooks++; } };
-  const { guild } = fakeGuild({ id: 'gclean', members: { cache: new Map(), me: { id: 'kurisu' }, fetch: async () => null } });
-  guild.fetchWebhooks = async () => new Map([['h1', hook], ['other', { delete: async () => { removed.webhooks += 10; } }]]);
-  guild.members.fetch = async (id) => (id === 'bot1' ? { id, user: { id, bot: true }, kick: async () => { removed.bots++; } } : null);
-  guild.invites = { fetch: async () => new Collection([
-    ['i1', { inviterId: 'spammer', delete: async () => { removed.invites++; } }],
-    ['i2', { inviterId: 'other', delete: async () => { removed.invites += 10; } }],
-  ]) };
-
-  assert.match(await recovery.deleteWebhook(guild, 'h1'), /^removed/);
-  assert.match(await recovery.deleteWebhook(guild, 'gone'), /^skipped/);
-  assert.match(await recovery.removeBot(guild, 'bot1'), /^removed/);
-  assert.match(await recovery.deleteInvitesBy(guild, 'spammer'), /^removed/);
-  assert.equal(removed.webhooks, 1, 'only the requested webhook is deleted');
-  assert.equal(removed.bots, 1);
-  assert.equal(removed.invites, 1, "only the spammer's invites are deleted");
-});
-
-// ---------------------------------------------------------------------------
-// Whitelist scope redesign (P1 item 5)
-// ---------------------------------------------------------------------------
-// The dashboard's "preset pending" sentinel (mask -1).
-const PRESET = -1n;
-const wlGuild = { id: 'gwlz', ownerId: 'owner', client: { user: { id: 'kurisu' } }, channels: { cache: new Map() } };
-const wlOwner = { id: 'owner', permissions: { has: () => true } };
-const wlSelect = (customId, values = []) => dashInteraction({ customId, values, guild: wlGuild, member: wlOwner, user: wlOwner });
-
-test('whitelist dashboard: presets stage a scope, custom scopes apply per page', async () => {
-  const presets = wlSelect(`ks:wsp:trusted_mod:${maskId(PRESET)}`);
-  await dashboard.handle(presets);
-  const select = walk(presets.calls.updated.components[0].toJSON()).find((n) => n.type === 3 && n.custom_id?.startsWith('ks:wsp'));
-  assert.ok(select, 'preset select is rendered');
-  assert.equal(select.options.length, Object.keys(SCOPE_PRESETS).length + 1, 'every preset plus Custom modules');
-  assert.ok(select.options.some((o) => o.label === 'Level default' && o.default), 'level default is the resting state');
-  assert.ok(select.options.some((o) => o.value === 'custom'), 'custom modules entry exists');
-
-  const channelCreate = KEYS.indexOf('channelCreate');
-  const picked = wlSelect(`ks:wsp:trusted_mod:${maskId(maskForScopes(['channelCreate']))}`, ['channels']);
-  await dashboard.handle(picked);
-  assert.ok(plainText(picked.calls.updated).includes(`ks:wladd:trusted_mod:${maskId(maskForScopes(['channelCreate', 'channelDelete', 'channelUpdate']))}`),
-    'picking a preset stages its modules for add/remove');
-
-  // Custom page 1: select a module. It must survive a save and land on the add pickers.
-  const custom = wlSelect(`ks:scl:trusted_mod:${maskId(PRESET)}:1`, ['channelCreate']);
-  await dashboard.handle(custom);
-  assert.ok(plainText(custom.calls.updated).includes(`ks:wsa:trusted_mod:${maskId(maskForScopes(['channelCreate']))}:1`), 'save button carries the selection');
-
-  const saved = wlSelect(`ks:wsa:trusted_mod:${maskId(maskForScopes(['channelCreate']))}:1`);
-  await dashboard.handle(saved);
-  assert.ok(plainText(saved.calls.updated).includes(`ks:wladd:trusted_mod:${maskId(maskForScopes(['channelCreate']))}`), 'save returns to the grant page');
-  assert.ok(channelCreate >= 0);
-
-  // With a non-preset set staged, deselecting the whole of page 1 drops those
-  // modules. Build the id from the rendered select so it uses the real encoding.
-  const page1 = KEYS.slice(0, 10);
-  // First 13 modules minus channelDelete: 12 modules, still matching no preset,
-  // so the staged scope stays an explicit module set after page 1 is cleared.
-  const start = maskForScopes(KEYS.slice(0, 13).filter((k) => k !== 'channelCreate'));
-  // Use page 1's rendered picker (the page-2 default would select different modules).
-  const sclId = walk(ui.edit(dashboard.route(wlGuild, `wl:trusted_mod:${maskId(start)}.1`)).components[0].toJSON())
-    .find((n) => n.type === 3 && n.custom_id?.startsWith('ks:scl:')).custom_id;
-  const cleared = wlSelect(sclId, []);
-  await dashboard.handle(cleared);
-  // The page's new state is exactly the submission, so page 2 must survive a
-  // full deselect of page 1 (Discord omits unselected options from values).
-  const saveId = walk(cleared.calls.updated.components[0].toJSON())
-    .flatMap((n) => (n.custom_id ? [n.custom_id] : []))
-    .find((id) => id.startsWith('ks:wsa:'));
-  const staged = new Set(scopesForMask(parseMask(saveId.split(':')[3])) || []); // ks:wsa:<level>:<mask>:<page>
-  for (const key of page1) assert.ok(!staged.has(key), `${key} was deselected`);
-  assert.ok(staged.has(KEYS[10]) && staged.has(KEYS[11]), 'modules from later pages are kept');
-
-  const all = wlSelect('ks:scl:trusted_mod:0:2', ['all']);
-  await dashboard.handle(all);
-  const saveAll = walk(all.calls.updated.components[0].toJSON())
-    .flatMap((n) => (n.custom_id ? [n.custom_id] : []))
-    .find((id) => id.startsWith('ks:wsa:'));
-  assert.equal(parseMask(saveAll.split(':')[3]), ALL_MASK, '"all" saves every module');
-});
-
-test('whitelist dashboard: custom page keeps Save, navigation and a compact entry list', async () => {
-  for (let n = 1; n <= 12; n++) repo.addWhitelist('gwlz', `entry${n}`, 'trusted_mod', 'owner');
-  const view = dashboard.whitelistScopeView(wlGuild, 'trusted_mod', 0n, 1, { rows: [], list: '' });
-  const text = view.filter((x) => typeof x === 'string').join('\n');
-  assert.match(text, /CUSTOM SCOPES/);
-  assert.match(text, /Page 1\/3/);
-  const ids = walk(ui.edit(view).components[0].toJSON()).flatMap((n) => (n.custom_id ? [n.custom_id] : []));
-  assert.ok(ids.includes('ks:wsa:trusted_mod:0:1'), 'Save');
-  assert.ok(ids.includes('ks:wsc:trusted_mod:0'), 'Cancel');
-  assert.ok(ids.includes('ks:scl:trusted_mod:0:1'), 'module picker');
-
-  const grant = dashboard.whitelistView(wlGuild, 'trusted_mod', 0n, 0).filter((x) => typeof x === 'string').join('\n');
-  assert.match(grant, /\+2 more/, 'grant page caps the visible entries');
-  for (let n = 1; n <= 12; n++) repo.removeWhitelist('gwlz', `entry${n}`);
-});
-
-// ---------------------------------------------------------------------------
-// Diagnostics view (P1 item 8)
-// ---------------------------------------------------------------------------
-const diagGuild = (over = {}) => {
-  const { guild } = fakeGuild({
-    id: 'gdiag',
-    members: { cache: new Map(), fetch: async () => null, me: { id: 'kurisu', permissions: new PermissionsBitField(0n), roles: { highest: { position: 0 } } } },
-    roles: { everyone: { id: 'gdiag' }, cache: new Map([['r1', { id: 'r1', position: 5 }]]) },
-    ...over,
-  });
-  guild.client = { user: { id: 'kurisu' } };
-  return guild;
-};
-
-test('diagnostics: missing permissions and a low role position are flagged', () => {
-  const guild = diagGuild();
-  const rows = dashboard.diagnostics.checks(guild);
-  const by = (label) => rows.find((r) => r.label === label);
-  assert.equal(by('Bot Permissions').level, 'bad');
-  assert.match(by('Bot Permissions').value, /Ban/);
-  assert.equal(by('Role Position').level, 'bad', 'position 1 is below other roles');
-  assert.equal(by('Audit Log Access').level, 'warn', 'unverified by default');
-  assert.match(dashboard.diagnostics.view(guild).filter((x) => typeof x === 'string').join('\n'), /DIAGNOSTICS/);
-});
-
-test('diagnostics: a setup bot passes, and audit-log access reflects the probe', async () => {
-  const guild = diagGuild();
-  guild.members.me = {
-    id: 'kurisu',
-    permissions: new PermissionsBitField(BigInt(PermissionsBitField.All)),
-    roles: { highest: { position: 10 } },
-  };
-  guild.roles.cache.set('r2', { id: 'r2', position: 9 });
-  const rows = dashboard.diagnostics.checks(guild, { audit: true });
-  const by = (label) => rows.find((r) => r.label === label);
-  assert.equal(by('Bot Permissions').level, 'ok');
-  assert.equal(by('Role Position').level, 'ok');
-  assert.equal(by('Audit Log Access').level, 'ok');
-  assert.equal(by('Lockdown').level, 'ok');
-
-  guild.fetchAuditLogs = async () => ({ entries: new Map() });
-  assert.equal(await dashboard.diagnostics.probe(guild), true);
-  guild.members.me.permissions = new PermissionsBitField(0n);
-  assert.equal(await dashboard.diagnostics.probe(guild), false);
-  guild.fetchAuditLogs = async () => { throw Object.assign(new Error('missing access'), { code: 50013 }); };
-  guild.members.me.permissions = new PermissionsBitField(BigInt(PermissionsBitField.All));
-  assert.equal(await dashboard.diagnostics.probe(guild), false);
-});
-
-test('authorization: diagnostics re-checks access on the interaction', async () => {
-  const denied = dashInteraction({ customId: 'ks:v:diag' });
-  await dashboard.handle(denied);
-  assert.ok(denied.calls.replied);
-  assert.equal(denied.calls.updated, null);
-
-  const mine = dashInteraction({ customId: 'ks:v:diag', guild: diagGuild(), member: wlOwner, user: wlOwner });
-  await dashboard.handle(mine);
-  assert.match(plainText(mine.calls.updated), /DIAGNOSTICS/);
-});
-
-test('dev: renders a V2 public team card with all IDs, labels and no embeds', async () => {
-  const cmd = commands.get('dev');
-  assert.ok(cmd, 'dev command missing');
-  const payload = await cmd.execute({ reply: async (p) => p });
-  const json = JSON.stringify(payload);
-  assert.ok(Number(payload.flags) & MessageFlags.IsComponentsV2, 'IsComponentsV2 flag');
-  assert.equal(Number(payload.flags) & MessageFlags.Ephemeral, 0, 'must be public');
-  for (const id of ['1521890728094208122', '1124369205727330346', '1441623190412726355', '1530686788824469646']) {
-    assert.ok(json.includes(`<@${id}>`), `missing mention for ${id}`);
-  }
-  for (const label of ['DEVELOPERS', 'Owner', 'Moderators']) assert.ok(json.includes(label), `missing label ${label}`);
-  assert.ok(!json.includes('"embeds"'));
-  assert.deepEqual(payload.allowedMentions, { parse: [], repliedUser: false });
-  const nodes = walk(payload.components[0].toJSON());
-  assert.equal(nodes.filter((n) => n.type === 2).length, 0, 'card should have no buttons');
-});
-
-test('dev: works through the text command path', async () => {
-  const { guild, addMember } = fakeGuild({ id: 'gdev', ownerId: 'owner' });
-  const member = addMember('owner');
-  member.permissions = { has: () => true };
-  const client = { commands, users: { cache: new Map(), fetch: async () => null } };
-  guild.client = client;
-  const sent = [];
-  const message = {
-    guild, member, client, content: '!dev',
-    author: { id: 'owner', bot: false, tag: 'owner#0001', username: 'owner' },
-    channel: { id: 'c1', name: 'general', permissionsFor: () => ({ has: () => true }) },
-    reply: async (payload) => { sent.push(payload); return { edit: async () => {} }; },
-  };
+  await repo.setGuild(guild.id, 'prefix', 'k');
   text.clearPrefix(guild.id);
   assert.equal(await text.handle(message, client), true);
-  assert.equal(sent.length, 1);
-  const json = JSON.stringify(sent[0]);
   assert.ok(Number(sent[0].flags) & MessageFlags.IsComponentsV2);
   assert.equal(Number(sent[0].flags) & MessageFlags.Ephemeral, 0);
-  assert.ok(json.includes('<@1521890728094208122>'));
-  assert.deepEqual(sent[0].allowedMentions, { parse: [], repliedUser: false });
+  sent.length = 0; message.content = 'kping';
+  assert.equal(await text.handle(message, client), true);
+  assert.ok(Number(sent[0].flags) & MessageFlags.IsComponentsV2);
+  sent.length = 0; message.content = 'kinda';
+  assert.equal(await text.handle(message, client), false);
 });
 
-test('help: includes dev under Utility with no buttons and correct counts', () => {
-  assert.equal(commands.size, 39, 'top-level command count');
-  const entries = help.collect(commands);
-  assert.equal(entries.length, 54, 'help entry count');
-  const dev = entries.find((e) => e.key === 'dev');
-  assert.ok(dev, 'dev missing from help');
-  assert.equal(dev.category, 'utility');
-  assert.match(dev.label, /\/dev/);
-  const view = help.detailView('1', entries, 'dev', 'utility', 0);
-  const nodes = walk(ui.edit(view).components[0].toJSON());
-  const buttons = nodes.filter((n) => n.type === 2);
-  assert.ok(buttons.every((b) => b.style === 2), 'detail view buttons must be secondary');
+test('prefix: per-guild prefix and typed ticket parsing', async () => {
+  await repo.setGuild('gp', 'prefix', '?');
+  assert.equal((await repo.getGuild('gp')).prefix, '?');
+  assert.equal((await repo.getGuild('gq')).prefix, '!');
+  const defs = (name, sub) => {
+    const json = commands.get(name).data.toJSON();
+    return sub ? json.options.find((o) => o.name === sub).options : json.options;
+  };
+  const guild = { id: 'gparse', ownerId: 'owner', members: { cache: new Map(), fetch: async () => null }, roles: { cache: new Map() }, channels: { cache: new Map() } };
+  const message = { guild, client: clientForParse() };
+  const parsed = await text.parseOptions(message, defs('ticket', 'close'), text.tokenize('ticket:12'));
+  assert.equal(parsed.values.ticket, 12);
+  const parsedMax = await text.parseOptions(message, defs('ticket', 'setup'), text.tokenize('max_open:5 transcripts:true'));
+  assert.equal(parsedMax.values.max_open, 5);
+  assert.equal(parsedMax.values.transcripts, true);
+});
+
+function clientForParse() { return { users: { cache: new Map(), fetch: async () => null } }; }
+
+test('authorization: dashboard rejects Administrator-only members and accepts the owner', async () => {
+  const { guild } = fakeGuild({ id: 'gauth' });
+  guild.client = fakeClient([guild]);
+  const admin = interaction({
+    guild, member: { id: 'admin', permissions: bits(PermissionsBitField.Flags.Administrator) },
+    user: { id: 'admin' }, customId: 'ks:v:main',
+  });
+  await dashboard.handle(admin.i);
+  assert.match(plain(admin.sink.replied), /not authorised/);
+  const owner = dashInteraction(guild);
+  await dashboard.handle(owner.i);
+  assert.ok(owner.sink.updated);
+  assert.ok(buttonNodes(owner.sink.updated).every((b) => b.style === 2));
+});
+
+test('helpers: durations, clip and presence wording', () => {
+  assert.equal(helperFns.parseDuration('30s'), 30);
+  assert.equal(helperFns.formatDuration(90), '1m 30s');
+  assert.equal(helperFns.presenceName(1234), '1,234 users');
+  assert.equal(helperFns.clip('abcdef', 4), 'abc…');
 });

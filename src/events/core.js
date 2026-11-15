@@ -10,6 +10,9 @@ const help = require('../components/help');
 const dashboard = require('../components/dashboard');
 const confirm = require('../components/common/confirm');
 const invite = require('../components/common/invite');
+const verification = require('../components/verification');
+const tickets = require('../components/tickets');
+const premium = require('../engines/premium');
 const warnings = require('../commands/moderation/warnings');
 const incidents = require('../commands/security/incidents');
 const banlist = require('../commands/moderation/banlist');
@@ -22,6 +25,7 @@ const log = require('../utils/logger');
 
 const SNAPSHOT_EVERY = 10 * 60 * 1000;
 const PRESENCE_EVERY = 2 * 60 * 1000;
+const PREMIUM_EVERY = 60 * 60 * 1000;
 
 /** A REST request that hit the client timeout (network hiccup, brief disconnect). */
 const isTimeout = (err) => err?.name === 'AbortError' || err?.code === 20;
@@ -74,6 +78,7 @@ async function safeReply(interaction, line) {
 const ROUTES = {
   kh: help.handle, ks: dashboard.handle, kc: confirm.handle, kw: warnings.component,
   ki: invite.handle, kn: incidents.component, kb: banlist.component, kg: guilds.component,
+  kv: verification.handle, kt: tickets.handle,
 };
 
 module.exports = [
@@ -82,7 +87,7 @@ module.exports = [
     async execute(client) {
       log.info(`logged in as ${client.user.tag} in ${client.guilds.cache.size} guild(s)`);
       for (const g of client.guilds.cache.values()) {
-        await repo.ensureGuild(g.id);
+        await repo.warmGuild(g.id);
         try { await antinuke.ensureRecentLoaded(g.id); } catch (e) { log.debug('nuke recent load failed', e); }
       }
       const problems = await validateEmojis(client).catch((e) => [`validation failed: ${e.message}`]);
@@ -90,17 +95,19 @@ module.exports = [
       else log.info('emoji registry validated');
       if (process.env.AUTO_DEPLOY === 'true') await deployCommands(client.commands).catch((e) => log.error('command deploy failed', e));
       refreshPresence(client);
+      await premium.sweep(client).catch((e) => log.warn('premium expiry sweep failed', e));
       await snapshotAll(client);
       client.timers = [
         setInterval(() => raid.tick(client).catch((e) => log.error('raid tick failed', e)), 30_000),
         setInterval(() => { snapshotAll(client).catch((e) => log.error('snapshot failed', e)); }, SNAPSHOT_EVERY),
         setInterval(() => refreshPresence(client), PRESENCE_EVERY),
+        setInterval(() => { premium.sweep(client).catch((e) => log.warn('premium expiry sweep failed', e)); }, PREMIUM_EVERY),
       ];
       await raid.tick(client).catch(() => {}); // resolves lockdowns that expired while offline
     },
   },
   { name: Events.GuildCreate, async execute(guild, client) {
-    await repo.ensureGuild(guild.id);
+    await repo.warmGuild(guild.id);
     try { await antinuke.ensureRecentLoaded(guild.id); } catch (e) { log.debug('nuke recent load failed', e); }
     try { await recovery.snapshotGuild(guild); } catch (e) { log.warn('snapshot failed', e); }
     refreshPresence(client);
