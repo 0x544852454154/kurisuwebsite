@@ -73,6 +73,7 @@ async function main(guild) {
   const watchers = await repo.countNukeWatch(guild.id);
   const incidents = await repo.countIncidents(guild.id);
   const whitelisted = await repo.countWhitelist(guild.id);
+  const premiumRow = await repo.getPremium(guild.id);
   const off = mods.filter((m) => !m.enabled).length;
 
   const verdict = !g.antinuke_enabled
@@ -92,6 +93,7 @@ async function main(guild) {
   return [
     { section: `### ${E.clearShield} KURISU SECURITY CENTER\n-# ${clip(guild.name, 60)}  ·  ${verdict.line}`, thumbnail: SECURITY_BANNER },
     `${E.clearShield} **Antinuke**\n-# ${g.antinuke_enabled ? verdict.icon : E.smallRedDot} ${g.antinuke_enabled ? 'On' : 'Off'}`,
+    `${E.crown} **Premium**  ·  ${premiumRow ? `Active until <t:${Math.floor(premiumRow.expires_at / 1000)}:R>` : 'Standard'}\n-# Security features are never premium-gated`,
     `${raidIcon} **Raid**\n-# ${raidState}`,
     `${E.verifiedDeveloper} **Whitelist**\n-# ${whitelisted} ${whitelisted === 1 ? 'entry' : 'entries'}`,
     `${E.bugHunter} **Incidents**\n-# ${incidents} logged`,
@@ -270,6 +272,7 @@ async function settings(guild, logType) {
     { section: `${E.modernRaid} **Raid Protection**\n-# ${on(g.raid_enabled)}`, button: ui.btn('ks:master:raid', g.raid_enabled ? 'Disable' : 'Enable', { emoji: g.raid_enabled ? 'smallRedDot' : 'verified' }) },
     'sep',
     `**Escalation**  ·  ${g.escalation_threshold ? `auto-ban after **${g.escalation_threshold}** incidents in 24h` : 'Off'}\n**Prefix**  ·  \`${g.prefix || '!'}\``,
+    { section: `${E.ownerShield} **Compromised Guard**\n-# ${on(g.compromised_guard)}  ·  new accounts lose whitelist exemption`, button: ui.btn('ks:comp', g.compromised_guard ? 'Disable' : 'Enable', { emoji: g.compromised_guard ? 'smallRedDot' : 'verified' }) },
     'sep',
     `**Log Channels**  ·  **${set.length}/${entries.length}** configured\n${lines}${unsetLine}`,
     'sep',
@@ -442,6 +445,15 @@ async function handle(i) {
         }
         await repo.setGuild(guild.id, col, cur ? 0 : 1);
         await audit(guild, i, `${arg[0] === 'raid' ? 'Raid protection' : 'Antinuke'}: ${cur ? 'disabled' : 'enabled'}`);
+        return show(await settings(guild));
+      }
+      case 'comp': {
+        if (!perms.isOwnerClass(guild, i.user.id)) {
+          return show(withFeedback(await settings(guild), { ok: false, message: 'Only the server owner or a bot owner can change the compromised-account guard.' }));
+        }
+        const g = await repo.getGuild(guild.id);
+        await repo.setGuild(guild.id, 'compromised_guard', g.compromised_guard ? 0 : 1);
+        await audit(guild, i, `Compromised-account guard: ${g.compromised_guard ? 'disabled' : 'enabled'}`);
         return show(await settings(guild));
       }
       case 'lt': return show(await settings(guild, i.values[0]));
