@@ -7,6 +7,7 @@ const { E } = ui;
 const TITLES = {
   antinuke: 'KURISU SECURITY', raid: 'KURISU SECURITY', moderation: 'KURISU MODERATION', member: 'KURISU LOGS',
   message: 'KURISU LOGS', channel: 'KURISU LOGS', role: 'KURISU LOGS', voice: 'KURISU LOGS', config: 'KURISU SECURITY',
+  ticket: 'KURISU TICKETS',
 };
 
 /**

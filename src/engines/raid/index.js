@@ -109,6 +109,9 @@ async function lockdown(guild, minutes, by, automatic = false) {
   await repo.setRaid(guild.id, { lockdown_active: 1, level: 'LOCKDOWN', lockdown_expires_at: minutes ? Date.now() + minutes * 60000 : null });
   for (const ch of guild.channels.cache.values()) {
     if (!LOCKABLE.includes(ch.type) || !ch.manageable) continue;
+    // Private ticket channels are already hidden and owned by the ticket flow;
+    // lockdown must not rewrite their overwrites.
+    if (await repo.getTicketByChannel(guild.id, ch.id).catch(() => null)) continue;
     const state = overwriteState(ch, everyone.id);
     if (state === 'deny') continue;
     await repo.saveLockedChannel(guild.id, ch.id, state);
