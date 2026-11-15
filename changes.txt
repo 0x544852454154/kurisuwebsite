@@ -59,8 +59,8 @@ TASK D - PREMIUM / GUILD PROFILE
 
 TASK E - EMOJI / THEME SWEEP
   - Scanned src/ for Unicode emoji and replaced arrows/other symbols.
-  - Added ticket: null placeholder with an explicit TODO; startup validation
-    reports it without crashing and ticket UI falls back to the staff icon.
+  - Registered the animated red ticket emoji
+    <a:437007ticket:1571389266083188757> for ticket panels and ticket channels.
   - Regression tests enforce no Unicode emoji, raw embeds, accent colours or
     non-secondary buttons.
   - Consistent red-emoji, colourless Components V2 design.

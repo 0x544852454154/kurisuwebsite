@@ -155,18 +155,22 @@ test('database: antinuke hot-path caches are filled by warmGuild', async () => {
   assert.equal(repo.cachedWhitelist('gw').byId.get('trusted').level, 'trusted_admin');
 });
 
-test('emoji registry: every configured entry parses, missing ticket key is reported without crashing', async () => {
+test('emoji registry: every configured entry parses and the animated ticket emoji is registered', async () => {
   for (const [k, v] of Object.entries(EMOJIS)) {
     if (v === null) continue;
     assert.ok(parseEmoji(v), `${k} malformed`);
   }
   assert.ok(Object.keys(EMOJIS).length >= 30);
-  assert.equal(EMOJIS.ticket, null, 'ticket icon is an explicit TODO, never a Unicode fallback');
+  assert.equal(EMOJIS.ticket, '<a:437007ticket:1571389266083188757>');
+  const ticket = parseEmoji(EMOJIS.ticket);
+  assert.ok(ticket, 'ticket emoji syntax is valid');
+  assert.equal(ticket.animated, true);
+  assert.equal(ticket.name, '437007ticket');
   const problems = await validateEmojis({
-    emojis: { cache: new Map() },
+    emojis: { cache: new Map([['1571389266083188757', { id: '1571389266083188757', name: '437007ticket' }]]) },
     application: { emojis: { fetch: async () => new Map() } },
   });
-  assert.ok(problems.some((p) => p.startsWith('ticket:')), 'startup validation names the missing ticket key');
+  assert.ok(!problems.some((p) => p.startsWith('ticket:')), 'the registered ticket emoji validates when visible');
 });
 
 test('modules: 28 modules with hardened critical defaults', () => {

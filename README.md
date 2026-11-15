@@ -142,9 +142,8 @@ current prefix form for every command.
 - The custom emojis from `src/config/emojis.js` must be visible to the bot. Either the bot is in
   the server that owns them, or you upload them as **Application Emojis** in the Developer Portal.
   On startup Kurisu validates the registry and logs any emoji it cannot see.
-- The `ticket` emoji is an explicit TODO placeholder (`null`) until a red ticket emoji is uploaded.
-  Ticket UI falls back to the `staff` icon and startup validation reports the missing key without
-  crashing.
+- The animated red `ticket` emoji (`<a:437007ticket:1571389266083188757>`) is registered for the
+  ticket panel, ticket channels and help.
 
 ## Discord Developer Portal setup
 
@@ -314,7 +313,6 @@ edge cases. Never run destructive tests on a real community.
 | Symptom | Fix |
 |---|---|
 | Emojis show as text | The bot cannot see them; use Application Emojis or join the emoji server. Check the startup warning. |
-| `ticket: no emoji ID configured` | Upload the red ticket emoji and replace the `null` in `src/config/emojis.js`; UI falls back to the staff icon until then. |
 | Slash commands missing | Run `npm run deploy`; global commands can take a while, use `DEV_GUILD_ID` when testing. |
 | "Used disallowed intents" | Enable Server Members Intent and Message Content Intent in the Portal. |
 | Database connection fails | Check `DATABASE_URL`, the Atlas IP allowlist and `DATABASE_NAME`. |

@@ -40,10 +40,8 @@ const EMOJIS = {
   redDot: '<:1523reddot:1570097464365551629>',
   smallRedDot: '<:1476redsmalldot:1570097462151086323>',
 
-  // TODO(owner): upload a red ticket emoji as a guild/application emoji and
-  // replace null with its exact <:name:id>. Until then the UI omits the icon
-  // and uses a plain text label; never substitute a Unicode emoji.
-  ticket: null,
+  // Animated red ticket used by the ticket panel, ticket channels and help.
+  ticket: '<a:437007ticket:1571389266083188757>',
 };
 
 const EMOJI_RE = /^<(a?):([A-Za-z0-9_]{2,32}):(\d{17,20})>$/;

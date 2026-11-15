@@ -212,9 +212,9 @@ Emoji registry:
   - parseEmoji validates syntax.
   - validateEmojis() runs on ClientReady and reports unparseable, invisible or
     name-mismatched entries.
-  - `ticket` is currently null as an explicit TODO. Upload a red ticket emoji,
-    replace null with its exact syntax, and startup validation will stop
-    reporting it. Until then ticket UI falls back to the `staff` icon.
+  - `ticket` is the animated red ticket
+    `<a:437007ticket:1571389266083188757>`. Startup validation reports it
+    only if the bot cannot see that emoji.
   - Never invent an emoji ID and never substitute a Unicode emoji for a missing
     custom one.
 
@@ -491,7 +491,7 @@ Coverage includes:
   - database migrations idempotency and custom-row preservation
   - guild isolation and atomic counters (including ticket numbering)
   - warm caches filled by warmGuild
-  - emoji registry syntax and the null ticket TODO
+  - emoji registry syntax and the animated ticket emoji
   - 28 modules and hardened defaults
   - owner/bot/whitelist exemptions, Administrator not exempt
   - compromised-account guard default off and owner protection
@@ -572,8 +572,8 @@ Never run destructive tests on a real community.
   - Message logs show metadata, not content.
   - Manually deleted ticket channels cannot be recovered. Transcripts must be
     enabled in advance and go only to the ticket log channel.
-  - The `ticket` emoji is null until the owner uploads one; UI falls back to
-    the `staff` icon and startup validation reports the missing key.
+  - The animated `ticket` emoji must be visible to the bot; startup validation
+    reports it if Discord cannot resolve the registered ID.
   - MongoDB TTL cleanup is not instantaneous; code filters expired rows.
   - Warm caches assume the bot process is the only writer. External DB edits
     require a restart or cache invalidation.
@@ -621,8 +621,8 @@ Task D - Premium / profile:
 
 Task E - Emoji/theme sweep:
   - Scanned src/ for Unicode emoji; replaced arrows and other symbols.
-  - Added ticket emoji placeholder with an explicit TODO.
-  - Startup validation reports null/missing keys without crashing.
+  - Registered the animated red ticket emoji for all ticket UI.
+  - Startup validation reports missing/unresolvable keys without crashing.
   - Regression tests for Unicode, embeds, accent colours and button styles.
   - Consistent red-emoji, colourless V2 theme.
 
