@@ -21,6 +21,9 @@ const alerted = new Map();   // `${guild}:${exec}:${module}` -> watch-alert expi
 const LOCK_MS = 60_000;
 const NUKE_WATCH_MS = 24 * 3600 * 1000;
 const RESTORE_CONCURRENCY = 3;
+// The dashboard allows module and Nuke Guard windows up to 300s. Keep burst
+// history for the full maximum so a configured window is never truncated.
+const RECENT_RETENTION_MS = 300_000;
 
 const humanize = (s) => s.replace(/([a-z])([A-Z])/g, '$1 $2');
 const actionLabel = (action) => humanize(AuditLogEvent[action] || `Action ${action}`);
@@ -70,7 +73,7 @@ async function ensureRecentLoaded(guildId, windowMs = 120_000, nowMs = Date.now(
   const gid = String(guildId);
   if (loadedRecent.has(gid)) return;
   loadedRecent.add(gid);
-  const since = nowMs - Math.max(windowMs, 120_000);
+  const since = nowMs - Math.max(windowMs, RECENT_RETENTION_MS);
   let rows = [];
   try {
     rows = await getDb().collection('nuke_recent').find({ guild_id: gid, created_at: { $gte: since } }).sort({ created_at: 1 }).toArray();
@@ -99,11 +102,11 @@ async function cleanup() {
   for (const [k, v] of seen) if (n - v > 120_000) seen.delete(k);
   for (const [k, v] of locks) if (v < n) { locks.delete(k); punished.delete(k); }
   for (const [k, arr] of windows) { const f = arr.filter((x) => n - x.t < 300_000); if (f.length) windows.set(k, f); else windows.delete(k); }
-  for (const [k, arr] of recent) { const f = arr.filter((x) => n - x.t < 120_000); if (f.length) recent.set(k, f); else recent.delete(k); }
+  for (const [k, arr] of recent) { const f = arr.filter((x) => n - x.t < RECENT_RETENTION_MS); if (f.length) recent.set(k, f); else recent.delete(k); }
   for (const [k, v] of alerted) if (v < n) alerted.delete(k);
   if (mitigated.size > 5000) mitigated.clear();
   try { await repo.pruneNukeWatch(n); } catch (err) { log.debug('nuke watch cleanup failed', err); }
-  try { await repo.pruneNukeRecent(n - 120_000); } catch (err) { log.debug('nuke recent cleanup failed', err); }
+  try { await repo.pruneNukeRecent(n - RECENT_RETENTION_MS); } catch (err) { log.debug('nuke recent cleanup failed', err); }
 }
 setInterval(() => { cleanup().catch((err) => log.debug('nuke cleanup failed', err)); }, 60_000).unref();
 
