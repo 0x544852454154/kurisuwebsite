@@ -892,6 +892,39 @@ test('prefix: per-guild prefix and typed ticket parsing', async () => {
   assert.equal(parsedAttachment.values.image, attachment);
 });
 
+test('text commands: premium enable, activate and list work through the prefix pipeline', async () => {
+  const { guild, addMember } = fakeGuild({ id: '123456789012345679', ownerId: 'botowner' });
+  const member = addMember('botowner');
+  member.permissions = { has: () => true };
+  member.user = { id: 'botowner', bot: false, tag: 'botowner#0001', username: 'botowner' };
+  const client = fakeClient([guild]);
+  const sent = [];
+  const message = {
+    guild, member, client, content: '!premium enable',
+    author: { id: 'botowner', bot: false, tag: 'botowner#0001', username: 'botowner' },
+    channel: { id: 'c1', name: 'general', permissionsFor: () => ({ has: () => true }) },
+    reply: async (payload) => { sent.push(payload); return { edit: async () => {} }; },
+  };
+  await repo.setGuild(guild.id, 'prefix', '!');
+  text.clearPrefix(guild.id);
+
+  assert.equal(await text.handle(message, client), true);
+  assert.ok(await repo.getPremium(guild.id), 'prefix enable activates premium');
+  assert.match(plain(sent[0]), /Premium enabled/);
+
+  await repo.clearPremium(guild.id);
+  sent.length = 0;
+  message.content = '!premium activate';
+  assert.equal(await text.handle(message, client), true);
+  assert.ok(await repo.getPremium(guild.id), 'prefix activate is an alias');
+  assert.match(plain(sent[0]), /Premium enabled/);
+
+  sent.length = 0;
+  message.content = '!premium list';
+  assert.equal(await text.handle(message, client), true);
+  assert.match(plain(sent[0]), /PREMIUM GUILDS/);
+});
+
 function clientForParse() { return { users: { cache: new Map(), fetch: async () => null } }; }
 
 test('authorization: dashboard rejects Administrator-only members and accepts the owner', async () => {

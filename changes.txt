@@ -6,6 +6,10 @@ MongoDB before this release; bot.txt and README now match the code.
 
 LIVE COMMAND FIX
   - Added /premium activate as an alias for /premium enable.
+  - Fixed the prefix parser's subcommand detection (discord.js exposes
+    ApplicationCommandOptionType.Subcommand, not SubCommand). Prefix commands
+    such as "!premium enable" now reach the correct subcommand instead of
+    falling through to disable.
   - /premium and /botprofile now defer their ephemeral reply before database,
     permission, download or logging work, preventing "Application did not
     respond" timeouts on slower hosts.
@@ -85,7 +89,7 @@ DOCUMENTATION / VERSION
 TESTS
   - tests/kurisu.test.js converted to an async MongoDB suite using
     mongodb-memory-server.
-  - 37 tests passing.
+  - 38 tests passing.
   - Remaining manual checks: live Discord commands, real audit-log delivery,
     emoji rendering, large-channel lockdown and recovery, hierarchy edge cases.
 

@@ -9,7 +9,7 @@ Version      : 2.1.0
 Stack        : Node.js 22+, discord.js 14, MongoDB (official driver), dotenv
 Database     : MongoDB via DATABASE_URL (already migrated; SQLite is legacy only)
 UI           : Discord Components V2 (never classic embeds)
-Tests        : 37 automated tests, all passing
+Tests        : 38 automated tests, all passing
 
 Read this file before changing anything. Also read:
   - README.md
@@ -48,7 +48,7 @@ Current scale:
   - 42 top-level slash commands.
   - 72 help entries (top-level commands + subcommands).
   - 28 antinuke modules.
-  - 37 automated tests, all passing.
+  - 38 automated tests, all passing.
   - Version 2.1.0.
 
 
@@ -489,7 +489,7 @@ Run:
   node --test tests/kurisu.test.js
   npm test
 
-Current state: 37 tests, 37 passing.
+Current state: 38 tests, 38 passing.
 
 Coverage includes:
   - database migrations idempotency and custom-row preservation
@@ -644,7 +644,7 @@ Default prefix          : !
 Commands                : 42
 Help entries            : 72
 Antinuke modules        : 28
-Tests                   : 37 passing
+Tests                   : 38 passing
 UI                      : Components V2, grey buttons, red emojis only
 Database                : MongoDB via DATABASE_URL
 Database name default   : URI path, then DATABASE_NAME, then "prismo"

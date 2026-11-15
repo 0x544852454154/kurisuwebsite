@@ -490,7 +490,7 @@ async function handle(message, client) {
     }
   }
 
-  const subs = (json.options || []).filter((o) => o.type === T.SubCommand);
+  const subs = (json.options || []).filter((o) => o.type === T.Subcommand);
   let sub = null;
   let defs = json.options || [];
   if (subs.length) {
