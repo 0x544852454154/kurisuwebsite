@@ -7,12 +7,15 @@ const { E } = ui;
 
 function render() {
   const ownerLines = developers.owner.map((id) => `${E.verified} <@${id}>`).join('\n');
+  const coOwnerLines = developers.coOwners.map((id) => `${E.verified} <@${id}>`).join('\n');
   const modLines = developers.moderators.map((id) => `${E.verified} <@${id}>`).join('\n');
   return ui.message([
     `### ${E.ownerBadge} DEVELOPERS`,
     '-# Kurisu Security team',
     'sep',
     `${E.ownerBadge} **Owner**\n${ownerLines}`,
+    'sep',
+    `${E.earlyDeveloper} **Co-Owners**\n${coOwnerLines}`,
     'sep',
     `${E.modBadge} **Moderators**\n${modLines}`,
   ]);
