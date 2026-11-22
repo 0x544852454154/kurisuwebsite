@@ -309,31 +309,31 @@ if(r.listening_to_spotify&&r.spotify)t='Listening to '+r.spotify.song+' by '+r.s
 var p=F(a,'ac');p.hidden=!t;p.textContent=t}
 function poll(){DEVS.forEach(function(d){try{fetch('https://api.lanyard.rocks/v1/users/'+d[0]).then(function(r){return r.json()}).then(function(j){put(d,j&&j.success?j.data:{miss:1})}).catch(function(){put(d,null)})}catch(e){put(d,null)}})}
 poll();setInterval(poll,30000);
-/* servers + users (PLACEHOLDERS: replaced by /api/stats when the site is served by web.js; static hosting keeps these) */
-var PROOF={users:'00,000',servers:'000',list:[]};
+/* servers + users (PLACEHOLDERS: replaced by /api/stats when served by web.js or the Vercel function; a plain static host keeps these) */
+var PROOF={users:'00,000',servers:'000',list:[],norm:0};
 for(var q=0;q<10;q++)PROOF.list.push({name:'Server name',members:0,icon:''});
 var PROOF_READY=false;
 function num(n){n=Number(n);return isFinite(n)?Math.round(n).toLocaleString('en-US'):'0'}
 function proof(){$('#pu').textContent=PROOF.users;$('#ps').textContent=PROOF.servers;
 /* the reel is only shown once there are real servers to show */
 var rl=$('.reel'),track=$('#trk');track.textContent='';
-if(!PROOF_READY){if(rl)rl.setAttribute('hidden','');return}
+if(!PROOF_READY||!PROOF.list.length){if(rl)rl.setAttribute('hidden','');return}
 if(rl)rl.removeAttribute('hidden');
 track.style.setProperty('--dur',Math.max(20,PROOF.list.length*6)+'s');
 for(var k=0;k<2;k++)PROOF.list.forEach(function(s){
 var c=document.createElement('div'),i=document.createElement('span'),n=document.createElement('span'),m=document.createElement('span');
 c.className='srv';if(k)c.setAttribute('aria-hidden','true');i.className='si';n.className='sn';m.className='sm';
 if(s.icon){var g=new Image();g.alt='';g.loading='lazy';g.src=s.icon;i.appendChild(g)}
-n.textContent=s.name||'Server';m.textContent=num(s.members)+' members';
+n.textContent=s.name||'Server';m.textContent=(PROOF.norm?num(s.members):s.members)+' members';
 c.appendChild(i);c.appendChild(n);c.appendChild(m);track.appendChild(c)})}
-/* live counts: /api/stats from the bot (web.js). Placeholders stay if it is not served. */
+/* live counts: /api/stats (web.js when self-hosted, api/stats.js on Vercel). Placeholders stay if neither is reachable. */
 function apply(s){if(!s||!isFinite(Number(s.users)))return;
-PROOF_READY=true;PROOF.users=num(s.users);PROOF.servers=num(s.communities);
-if(Array.isArray(s.list)&&s.list.length)PROOF.list=s.list;proof()}
+var n=PROOF;PROOF={users:num(s.users),servers:num(s.communities),list:Array.isArray(s.list)&&s.list.length?s.list:n.list,norm:1};
+PROOF_READY=true;proof()}
 function live(){fetch('/api/stats',{cache:'no-store'}).then(function(r){return r.ok?r.json():null}).then(apply).catch(function(){})}
 proof();
 live();setInterval(live,60000);
-setTimeout(function(){if(!PROOF_READY){var p=$('.pow');if(p)p.title='Live counts need the site server (npm run web)'}},8000);
+setTimeout(function(){if(!PROOF_READY){var p=$('.pow');if(p)p.title='Live counts need DISCORD_TOKEN on this deployment (vercel env) or npm run web'}},8000);
 
 /* copy buttons */
 function flash(t){cur.textContent=t;isl.classList.add('pop');clearTimeout(flash.t);flash.t=setTimeout(function(){isl.classList.remove('pop');cur.textContent=curL},1700)}

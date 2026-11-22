@@ -30,3 +30,21 @@ Environment variables:
 - `WEB_PORT` - port for the site (default `8080`).
 - `PORT` - overrides `WEB_PORT`; hosting panels such as Pterodactyl set it.
 - `SERVE_WEB=true` - serve the site from the normal `node index.js` start too.
+
+## Static hosting (Vercel, Netlify, GitHub Pages)
+
+On a static host the bot is not running there, so the counts come from
+`api/stats.js` instead: a serverless function that asks the Discord API with the
+bot token (`GET /users/@me/guilds`, then `GET /guilds/{id}?with_counts=true`).
+
+1. Import the repo on Vercel. No build step, no framework: the root `index.html`
+is the site and `api/stats.js` becomes `/api/stats`.
+2. Project -> Settings -> Environment Variables -> add `DISCORD_TOKEN` with the
+bot token, then redeploy.
+
+Result is cached five minutes at the edge, so page refreshes never hit Discord's
+rate limits. If the variable is missing, `/api/stats` answers 503 and the page
+keeps its placeholders rather than showing zeros.
+
+To proxy a live self-hosted bot instead, set `API_BASE` to its origin (for
+example `https://bot.example.com`); the function forwards `API_BASE/api/stats`.
