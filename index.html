@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kurisu Security</title>
+<script>document.documentElement.className='js'</script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400&family=Space+Grotesk:wght@500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@125,200;125,300&display=swap">
+<style>
+@property --a{syntax:'<angle>';inherits:false;initial-value:0deg}
+@property --r{syntax:'<length>';inherits:false;initial-value:0px}
+:root{--bg:#060606;--ink:#f4f4f4;--mute:#a6a6a6;--line:rgba(255,255,255,.14);--glass:rgba(255,255,255,.045);--blur:18px;--shine:1;--iw:204px;--iwo:min(940px,calc(100vw - 24px));--spring:cubic-bezier(.32,.72,0,1);color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@supports (transition-timing-function:linear(0,1)){:root{--spring:linear(0,.22 6%,.62 13%,.91 20%,1.06 28%,1.1 34%,1.07 41%,1.02 50%,.99 60%,1 75%,1)}}
+html{scroll-behavior:smooth;scroll-padding-top:calc(90px + env(safe-area-inset-top,0px))}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:16px/1.6 Inter,system-ui,sans-serif;overflow-x:hidden}
+h1,h2,h3,.sg{font-family:'Space Grotesk',Inter,system-ui,sans-serif;font-weight:600;text-wrap:balance}
+p{text-wrap:pretty}a{color:inherit;text-decoration:none}
+.mono,.label,pre,.chip,.k,.v,.n,.name,.stack{font-family:'JetBrains Mono',ui-monospace,monospace}
+a:focus-visible,button:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.bg{position:fixed;top:0;left:0;width:100%;height:100%;display:block;z-index:0;pointer-events:none;transition:opacity .2s}
+.L{position:relative;z-index:1}
+.wrap{max-width:1200px;margin:0 auto;padding:0 24px}
+.sec{padding-top:104px}
+.label{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+.h2{font-size:clamp(30px,4.2vw,54px);line-height:1.04;letter-spacing:-.025em}
+.lede{color:var(--mute);font-size:18px;max-width:58ch}
+.head{display:flex;flex-direction:column;gap:16px;margin-bottom:48px}
+/* glass + shiny outline */
+.g{position:relative;background:var(--glass);-webkit-backdrop-filter:blur(var(--blur)) saturate(150%);backdrop-filter:blur(var(--blur)) saturate(150%);border-radius:24px;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 18px 50px -24px #000;transition:transform .5s var(--spring),box-shadow .4s}
+@supports not (backdrop-filter:blur(1px)){.g{background:rgba(14,14,14,.92)}}
+.g::before,.o::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(135deg,rgba(255,255,255,calc(.55*var(--shine))),rgba(255,255,255,.05) 36%,rgba(255,255,255,.05) 64%,rgba(255,255,255,calc(.4*var(--shine))));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+.o::before{background:conic-gradient(from var(--a),rgba(255,255,255,.1),rgba(255,255,255,.95) 14%,rgba(255,255,255,.1) 30%,rgba(255,255,255,.1) 70%,rgba(255,255,255,.55) 86%,rgba(255,255,255,.1));animation:sp 6s linear infinite}
+@keyframes sp{to{--a:360deg}}
+.g::after{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(280px circle at var(--mx,50%) var(--my,0%),rgba(255,255,255,.11),transparent 62%);opacity:0;transition:opacity .35s;pointer-events:none}
+.g:hover::after{opacity:1}.g:hover{transform:translateY(-4px);box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 26px 60px -22px #000,0 0 40px -12px rgba(255,255,255,.2)}
+.btn{position:relative;display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 24px;border-radius:999px;font-weight:500;font-size:15px;background:rgba(255,255,255,.07);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);color:var(--ink);border:0;cursor:pointer;transition:transform .35s var(--spring),background .3s}
+.btn::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(135deg,rgba(255,255,255,.6),rgba(255,255,255,.08) 40%,rgba(255,255,255,.35));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}
+.btn:hover{transform:translateY(-2px);background:rgba(255,255,255,.14)}.btn:active{transform:scale(.97)}
+.btn.p{background:#f4f4f4;color:#060606}.btn.p:hover{background:#fff}.btn.p::before{display:none}
+/* island */
+.isl{position:fixed;z-index:50;top:calc(12px + env(safe-area-inset-top,0px));left:50%;translate:-50% 0;width:var(--iw);height:46px;border-radius:23px;overflow:hidden;background:rgba(8,8,8,.62);-webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%);box-shadow:0 12px 40px -10px #000,0 0 30px -8px rgba(255,255,255,.18);transition:width .7s var(--spring),height .7s var(--spring),border-radius .7s var(--spring),opacity .5s;opacity:0}
+.js .isl{opacity:0}.isl.on,html:not(.js) .isl{opacity:1}
+.isl.open{width:var(--iwo);border-radius:26px}
+.pill{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:12px;height:46px;padding:0 18px;width:var(--iw);position:absolute;left:0;top:0;transition:opacity .3s}
+.pill:focus-visible{outline:2px solid #fff;outline-offset:-4px}
+.mk{display:block;flex:none;width:12px;height:12px;background:#f4f4f4;transform:rotate(45deg);box-shadow:0 0 12px rgba(255,255,255,.7)}
+#cur{flex:1;font:500 14px 'Space Grotesk',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .22s,transform .22s,filter .22s}
+#cur.sw{opacity:0;transform:translateY(8px);filter:blur(6px)}
+.dot{flex:none;width:8px;height:8px;border-radius:50%;background:#f4f4f4;animation:pu 2.4s ease-in-out infinite}
+@keyframes pu{50%{box-shadow:0 0 0 5px rgba(255,255,255,.12)}}
+.isl.open .pill{opacity:0;pointer-events:none}
+.il{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;gap:2px;padding:0 8px 0 22px;visibility:hidden;transition:visibility 0s .45s}
+.isl.open .il{visibility:visible;transition-delay:0s}
+.il>*{opacity:0;transform:translateY(8px);filter:blur(6px);transition:opacity .4s,transform .5s var(--spring),filter .4s}
+.isl.open .il>*{opacity:1;transform:none;filter:none;transition-delay:calc(var(--i)*35ms + 160ms)}
+.il a:not(.btn){font-size:14px;color:var(--mute);padding:8px 9px;border-radius:999px;transition:color .25s,background .25s}
+.il a:not(.btn):hover{color:#fff;background:rgba(255,255,255,.08)}
+.il .btn{min-height:36px;padding:0 18px;font-size:14px}
+.pg{position:absolute;left:20px;right:20px;bottom:0;height:2px;transform-origin:left;transform:scaleX(var(--p,0));background:linear-gradient(90deg,transparent,#fff);opacity:.8}
+.isl.pop{box-shadow:0 12px 40px -10px #000,0 0 46px -4px rgba(255,255,255,.5)}
+.sk{position:fixed;left:0;right:0;text-align:center;bottom:calc(28px + env(safe-area-inset-bottom,0px));z-index:80;font:11px 'JetBrains Mono',monospace;letter-spacing:.12em;color:#8a8a8a;text-transform:uppercase;opacity:0;transition:opacity .6s;pointer-events:none}.sk.v{opacity:1}
+.js:not(.in) .L{visibility:hidden;animation:kvf 0s 6s forwards}@keyframes kvf{to{visibility:visible}}
+/* hero */
+.hero{padding-top:96px;padding-bottom:96px;min-height:100vh;min-height:100svh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+#home{min-height:0;padding-bottom:0}
+.hero h1{letter-spacing:0;text-shadow:0 0 12px rgba(6,6,6,.95),0 0 34px rgba(6,6,6,.9)}
+:root{--kf:clamp(52px,15.5vw,208px)}
+.kw{display:flex;justify-content:center;font:200 var(--kf)/1 'Archivo','Space Grotesk',Inter,system-ui,sans-serif;font-stretch:125%;letter-spacing:.06em;padding-left:.06em;color:#f4f4f4}
+.kl{display:inline-block;clip-path:inset(0 0 100% 0);transition:clip-path 1.2s cubic-bezier(.65,0,.35,1);transition-delay:calc(var(--i)*70ms)}
+.in .kl{clip-path:inset(-30%)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.hero .lede{margin-top:22px;text-wrap:balance}
+.proof{width:100vw;display:flex;flex-direction:column;align-items:center;gap:22px;margin-top:52px}
+.pow{padding:0 24px;font-size:15px;color:var(--mute)}.pow b{color:#fff;font-weight:600;font-variant-numeric:tabular-nums}
+.reel{width:100%;overflow:hidden;-webkit-mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent);mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent)}
+.trk{display:flex;width:max-content;animation:rl var(--dur,60s) linear infinite}.reel:hover .trk{animation-play-state:paused}
+@keyframes rl{to{transform:translateX(-50%)}}
+.srv{flex:none;display:grid;grid-template-columns:44px auto;column-gap:12px;align-items:center;margin-right:52px;text-align:left}
+.si{grid-row:1/3;width:44px;height:44px;border-radius:50%;overflow:hidden;background:linear-gradient(135deg,#2c2c2c,#111);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}.si img{display:block;width:100%;height:100%;object-fit:cover}
+.sn{align-self:end;font:600 15px/1.25 'Space Grotesk',Inter,sans-serif;color:#fff;white-space:nowrap}
+.sm{align-self:start;font-size:13px;color:var(--mute);white-space:nowrap}
+.hero .actions{margin-top:40px}
+.hero .lede{color:#c9c9c9;text-shadow:0 0 24px rgba(6,6,6,.95)}
+.w{display:inline-block;opacity:0;transform:translateY(.4em);filter:blur(10px);transition:opacity .9s,transform .9s var(--spring),filter .9s;transition-delay:calc(var(--i)*90ms)}
+.in .w{opacity:1;transform:none;filter:none}
+.hero>*:not(h1){opacity:0;transform:translateY(18px);transition:opacity .9s .5s,transform .9s .5s var(--spring)}.in .hero>*:not(h1){opacity:1;transform:none}
+.actions{display:flex;flex-wrap:wrap;gap:12px}
+
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:48px 56px;align-items:start}
+.col{display:flex;flex-direction:column;gap:20px;min-width:0}.col h3{font-size:24px;letter-spacing:-.015em}.col p{color:var(--mute)}
+.ledger{overflow:hidden}.lc,.row{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 24px;padding:16px 22px;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}.row{transition:background .3s}.row:hover{background:rgba(255,255,255,.05)}
+.k,.v{font-size:14px}.v{color:var(--mute);font-variant-numeric:tabular-nums}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr));gap:16px}
+.step{display:grid;grid-template-columns:44px minmax(0,1fr);gap:16px;padding:24px}
+.step .n{font-size:14px;color:var(--mute);padding-top:3px;transition:color .5s,text-shadow .5s}.step.rv.vis .n{color:#fff;text-shadow:0 0 14px rgba(255,255,255,.8)}
+.step h3{font-size:19px;letter-spacing:-.01em;margin-bottom:6px}.step p{color:var(--mute);font-size:15px}
+.note{margin-top:24px;padding:28px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:24px}
+.note p{color:var(--mute);font-size:14px}.note b{display:block;font-weight:500;font-size:14px;margin-bottom:4px}
+.meter{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:end;padding:28px}
+.lvl{display:flex;flex-direction:column;gap:12px}.bar2{width:100%;border-radius:12px;background:linear-gradient(#fff,#bbb);box-shadow:0 0 24px -6px rgba(255,255,255,.7);transform-origin:bottom;transform:scaleY(0);transition:transform 1s var(--spring);transition-delay:calc(var(--i)*140ms)}.vis .bar2{transform:none}
+.name{font-size:11px;letter-spacing:.1em;overflow-wrap:anywhere}
+.chips{display:flex;flex-wrap:wrap;gap:8px}.chip{font-size:13px;padding:6px 14px;border-radius:999px;position:relative;background:var(--glass);transition:transform .3s var(--spring),background .3s}
+.chip::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(135deg,rgba(255,255,255,.45),rgba(255,255,255,.05) 50%,rgba(255,255,255,.3));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}.chip:hover{transform:translateY(-2px);background:rgba(255,255,255,.1)}
+.pw{position:relative;min-width:0}pre{margin:0;padding:20px 22px;border-radius:18px;font-size:13px;line-height:1.7;color:#dcdcdc;overflow-x:auto;background:rgba(10,10,10,.5)}
+.cp{position:absolute;top:10px;right:10px;z-index:2;min-height:30px;padding:0 12px;font:12px 'JetBrains Mono',monospace}
+.list{list-style:none;display:flex;flex-direction:column;gap:10px;color:var(--mute)}.list li{display:grid;grid-template-columns:14px minmax(0,1fr);gap:10px}.list li::before{content:"";width:6px;height:6px;margin-top:10px;background:#f4f4f4;border-radius:50%;box-shadow:0 0 8px #fff}
+.devs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:16px}
+.dev{display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.dev:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 26px 60px -22px #000,0 0 46px -10px var(--ac)}
+.dev::before{background:linear-gradient(135deg,rgba(255,255,255,.5),rgba(255,255,255,.05) 40%,rgba(255,255,255,.05) 60%,rgba(255,255,255,.35))}.dev:hover::before{background:linear-gradient(135deg,var(--ac),rgba(255,255,255,.08) 45%,var(--ac))}
+.bn{height:104px;background:linear-gradient(135deg,var(--ac),#111 80%);position:relative;overflow:hidden}.bn img{display:block;width:100%;height:100%;object-fit:cover;filter:grayscale(1) brightness(.7);transition:filter .4s}.dev:hover .bn img{filter:none}
+.db{display:flex;flex-direction:column;gap:10px;padding:0 20px 20px;min-width:0}
+.av{width:76px;height:76px;margin-top:-38px;border-radius:50%;border:4px solid #0b0b0b;background:#1c1c1c;object-fit:cover;display:flex;align-items:center;justify-content:center;font:600 28px 'Space Grotesk',sans-serif;position:relative;z-index:1}
+.dn{font:600 22px/1.15 'Space Grotesk',sans-serif;letter-spacing:-.015em;overflow-wrap:anywhere}
+.dh{font:13px 'JetBrains Mono',monospace;color:var(--mute);overflow-wrap:anywhere}
+.dr{align-self:flex-start;font:11px 'JetBrains Mono',monospace;letter-spacing:.12em;text-transform:uppercase;padding:4px 10px;border:1px solid var(--line);border-radius:999px}
+.ds{display:flex;align-items:center;gap:8px;font-size:14px}.da{font-size:14px;color:var(--mute);overflow-wrap:anywhere}.di{font:11px 'JetBrains Mono',monospace;color:#7d7d7d;overflow-wrap:anywhere}
+.sd{flex:none;width:10px;height:10px;border-radius:50%;border:1.5px solid #f4f4f4;transition:all .5s var(--spring)}
+.sd.online{background:#f4f4f4;box-shadow:0 0 10px #fff}.sd.idle{background:linear-gradient(90deg,#f4f4f4 50%,transparent 50%)}.sd.dnd{background:#f4f4f4;border-radius:2px}.sd.offline{border-color:#6b6b6b}
+.foot{margin-top:0;padding-top:32px;padding-bottom:48px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px 32px;color:var(--mute);font-size:14px}
+.rv{opacity:0;transform:translateY(24px);filter:blur(8px);transition:opacity .9s,transform .9s var(--spring),filter .9s,box-shadow .4s;transition-delay:calc(var(--d,0)*70ms)}
+.rv.vis{opacity:1;transform:none;filter:none}.g.rv.vis:hover{transform:translateY(-4px)}
+html:not(.js) .rv,html:not(.js) .w,html:not(.js) .hero>*{opacity:1;transform:none;filter:none}
+html:not(.js) .kl{clip-path:none}
+/* views: one section at a time */
+.view{display:none;min-height:calc(100svh - 110px);padding-bottom:104px}
+.view.act,html:not(.js) .view{display:block}
+.il a.cur:not(.btn){color:#fff;background:rgba(255,255,255,.1)}
+/* intro: blueprint guides draw in around the wordmark, a line traces KURISU, then it hands off to the hero */
+.intro{position:fixed;inset:0;z-index:70;overflow:hidden;background:#060606;visibility:hidden;transition:opacity .9s ease,visibility 0s .9s}
+.intro.go{visibility:visible}.intro.out,.in .intro{opacity:0;visibility:hidden}
+.tr .kl{transition:none}
+.bp{position:absolute;left:0;top:0;display:block}
+.bl,.bd{fill:none;stroke:rgba(255,255,255,.4);stroke-width:1}
+.bl{stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset var(--t,1.2s) cubic-bezier(.65,0,.35,1) var(--d,0s)}.go .bl{stroke-dashoffset:0}
+.bd{stroke-dasharray:2 5;opacity:0;transition:opacity 1.4s ease var(--d,0s)}.go .bd{opacity:.7}
+.bt{fill:transparent;stroke:#f4f4f4;stroke-width:1.2;stroke-dasharray:var(--dl);stroke-dashoffset:var(--dl);font:200 var(--fs) Archivo,'Space Grotesk',Inter,system-ui,sans-serif;font-stretch:125%;transition:stroke-dashoffset 1.4s cubic-bezier(.45,0,.2,1) var(--d,0s),fill .8s ease var(--f,0s),stroke-opacity .8s ease var(--f,0s)}
+.go .bt{stroke-dashoffset:0;fill:#f4f4f4;stroke-opacity:0}
+.tg{position:absolute;left:0;right:0;top:var(--ty,70%);text-align:center;font:400 clamp(11px,1.1vw,14px)/1.4 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.04em;color:#f4f4f4}
+.tg i{display:inline-block;width:.6em;height:1.05em;margin:0 1px;background:#f4f4f4;vertical-align:-.2em;animation:cb 1s steps(1) infinite}.tg span{opacity:0}
+@keyframes cb{50%{opacity:0}}
+.fl{display:flex;flex-wrap:wrap;gap:8px 28px}.fl a{transition:color .25s}.fl a:hover{color:#fff}
+.tos{max-width:980px}
+.cl{display:grid;grid-template-columns:minmax(0,240px) minmax(0,1fr);gap:12px 56px;padding:28px 0;border-top:1px solid var(--line)}.cl:last-child{border-bottom:1px solid var(--line)}
+.cl h3{font-size:19px;letter-spacing:-.01em}.cl p{color:var(--mute);max-width:64ch}.cl a{color:#fff;text-decoration:underline;text-underline-offset:3px}
+@media(max-width:700px){.cl{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:1000px){.isl{--iwo:min(560px,calc(100vw - 24px))}.isl.open{height:332px;border-radius:28px}.il{display:grid;grid-template-columns:1fr 1fr;align-content:center;gap:2px 6px;padding:16px 14px}.il a:not(.btn){padding:11px 14px;font-size:15px}.il .btn{grid-column:1/-1;margin-top:8px}}
+
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition-duration:.01s!important;transition-delay:0s!important}.rv,.w,.hero>*{opacity:1!important;transform:none!important;filter:none!important}.kl{clip-path:none!important}.bar2{transform:none}.reel{display:flex;justify-content:center}}
+</style>
+</head>
+<body>
+<small class="sk" id="lk">Press any key to skip</small>
+<div class="intro" id="intro" aria-hidden="true"><svg class="bp" id="bp"></svg><p class="tg" id="tg"></p></div>
+
+<nav class="isl o" id="isl" aria-label="Sections">
+<button class="pill" id="pill" aria-expanded="false" aria-controls="il"><i class="mk"></i><span id="cur" aria-live="polite">Kurisu Security</span><b class="dot"></b></button>
+<div class="il" id="il"><a href="#home">Home</a><a href="#protection">Protection</a><a href="#detection">Detection</a><a href="#raid">Raid</a><a href="#whitelist">Whitelist</a><a href="#community">Community</a><a href="#commands">Commands</a><a href="#setup">Setup</a><a href="#developers">Developers</a><a class="btn p" href="https://discord.com/oauth2/authorize?client_id=1570097060718575728" target="_blank" rel="noopener">Add to Discord</a></div>
+<u class="pg"></u></nav>
+
+<canvas class="bg" id="bg" aria-hidden="true"></canvas>
+
+<main class="L" id="top">
+<div class="view" id="home">
+<section class="wrap hero">
+<h1><span class="sr">KURISU</span><span class="kw" aria-hidden="true"><span class="kl" style="--i:0">K</span><span class="kl" style="--i:1">U</span><span class="kl" style="--i:2">R</span><span class="kl" style="--i:3">I</span><span class="kl" style="--i:4">S</span><span class="kl" style="--i:5">U</span></span></h1>
+<p class="lede">Kurisu Security is a Discord antinuke, raid protection, tickets and moderation bot. The executor is banned before anything gets restored.</p>
+<div class="proof">
+<p class="pow">Powering <b id="pu">000,000</b> users across <b id="ps">000</b> communities</p>
+<div class="reel" role="group" aria-label="Servers using Kurisu"><div class="trk" id="trk"></div></div>
+</div>
+<div class="actions"><a class="btn p" href="https://discord.com/oauth2/authorize?client_id=1570097060718575728" target="_blank" rel="noopener">Add to Discord</a></div>
+</section>
+</div>
+
+<section class="wrap sec view" id="protection">
+<div class="head rv"><span class="label">Antinuke</span><h2 class="h2">Every destructive action has a threshold.</h2><p class="lede">Each of the 28 modules has its own switch, threshold, time window, punishment, incident log and persistent config. Critical modules default to a ban.</p></div>
+<div class="two">
+<div class="col rv"><h3>Nuke Guard</h3><p>Counts destructive actions across modules, per executor, before any single module threshold. A mixed burst cannot stay under every limit. At the guard threshold the executor is banned immediately and put on a 24 hour ban-on-sight watch.</p>
+<ul class="list"><li>Ban is the first Discord call, before mitigation or any awaited persistence.</li><li>If Discord refuses: ban, kick, quarantine, strip dangerous roles, timeout.</li><li>Bot-add containment, bounded restore concurrency and re-entrant response locks.</li><li>An optional compromised-account guard removes whitelist immunity from accounts younger than seven days.</li></ul></div>
+<div class="ledger g rv" style="--d:2"><div class="lc"><span class="label">Module</span><span class="label">Default limit</span></div>
+<div class="row"><span class="k">channelDelete, roleDelete</span><span class="v">2 actions / 5s</span></div>
+<div class="row"><span class="k">massBan, massKick, massUnban</span><span class="v">3 actions / 15s</span></div>
+<div class="row"><span class="k">webhookDelete, nukeGuard</span><span class="v">3 actions / 10-20s</span></div>
+<div class="row"><span class="k">botAdd, permEscalation, automodRule, vanityChange, prune</span><span class="v">1 action / 30-60s</span></div></div>
+</div></section>
+
+<section class="wrap sec view" id="detection">
+<div class="head rv"><span class="label">How detection works</span><h2 class="h2">From audit log entry to ban.</h2><p class="lede">Kurisu reads GUILD_AUDIT_LOG_ENTRY_CREATE. Each entry already carries the executor, target and changes, so there is no polling delay and no guessing from the latest row.</p></div>
+<div class="steps">
+<div class="step g rv"><span class="n">01</span><div><h3>Entry arrives</h3><p>Duplicates by entry ID are dropped. An entry with no executor is ignored, so an arbitrary member is never punished.</p></div></div>
+<div class="step g rv" style="--d:1"><span class="n">02</span><div><h3>Exemptions checked</h3><p>Guild owner, bot owner, Kurisu and the whitelist are skipped. Administrator permission alone gives no immunity.</p></div></div>
+<div class="step g rv" style="--d:2"><span class="n">03</span><div><h3>Nuke Guard counts</h3><p>Warm caches answer without a database read, and destructive actions are counted per executor across all modules.</p></div></div>
+<div class="step g rv" style="--d:3"><span class="n">04</span><div><h3>Ban first</h3><p>The ban goes out before mitigation. Repeat offences within 24 hours escalate to a ban.</p></div></div>
+<div class="step g rv" style="--d:4"><span class="n">05</span><div><h3>Nuke watch</h3><p>A banned or kicked executor is written to a durable 24 hour watch that survives restarts. Any action, message or rejoin while watched is a ban.</p></div></div>
+<div class="step g rv" style="--d:5"><span class="n">06</span><div><h3>Mitigate and log</h3><p>At most three restore tasks run at once, categories first. An incident row and a short log line are written.</p></div></div>
+</div>
+<div class="note g rv"><div><b>Discord limits</b><p>Messages in a deleted channel cannot be recovered. Restored channels and roles get new IDs.</p></div><div><b>Server assets</b><p>Icon, banner and vanity URL cannot be restored through the API. Kurisu restores the server name only.</p></div><div><b>Permissions</b><p>Restored roles and overwrites never regain dangerous permissions.</p></div></div>
+</section>
+
+<section class="wrap sec view" id="raid">
+<div class="head rv"><span class="label">Raid protection</span><h2 class="h2">Four levels, one lockdown.</h2><p class="lede">Join velocity and account age move the server between levels. Lockdown can trigger automatically or by hand.</p></div>
+<div class="two">
+<div class="meter g rv" role="img" aria-label="Four raid levels from NORMAL to LOCKDOWN, rising in intensity">
+<div class="lvl"><div class="bar2" style="height:40px;opacity:.25;--i:0"></div><span class="name">NORMAL</span></div>
+<div class="lvl"><div class="bar2" style="height:88px;opacity:.45;--i:1"></div><span class="name">ELEVATED</span></div>
+<div class="lvl"><div class="bar2" style="height:140px;opacity:.72;--i:2"></div><span class="name">HIGH</span></div>
+<div class="lvl"><div class="bar2" style="height:200px;--i:3"></div><span class="name">LOCKDOWN</span></div></div>
+<div class="col rv" style="--d:2"><ul class="list"><li>Join velocity and minimum account age gates, with a join history log.</li><li>Verification mode and lockdown use Discord’s verification level, @everyone send permissions and the invite pause.</li><li>Raid protection never mass-bans. Optional lockdown kicks only accounts younger than the configured age.</li><li>Ticket channels are excluded from lockdown.</li></ul></div>
+</div></section>
+
+<section class="wrap sec view" id="whitelist">
+<div class="head rv"><span class="label">Whitelist</span><h2 class="h2">Trust is scoped, never blanket.</h2><p class="lede">Entries can target users or roles, and can be limited to specific protection modules.</p></div>
+<div class="two">
+<div class="col rv"><div class="chips"><span class="chip">trusted_admin</span><span class="chip">trusted_mod</span><span class="chip">bypass</span><span class="chip">trusted bot</span></div><p>Trusted Moderators only bypass message modules unless scopes say otherwise. Administrator permission alone gives no antinuke immunity and no whitelist authority. Owner protections cannot be removed.</p></div>
+<div class="pw g rv" style="--d:2"><pre>/whitelist add level:Trusted Moderator role:@Moderators scopes:channel-create,channel-rename
+/whitelist add level:Trusted Moderator user:@member scopes:pings
+/whitelist add level:Bypass user:@trusted-admin
+/whitelist add level:Trusted Bot user:@logger-bot</pre></div>
+</div></section>
+
+<section class="wrap sec view" id="community">
+<div class="head rv"><span class="label">Verification and tickets</span><h2 class="h2">Front door and help desk.</h2></div>
+<div class="two">
+<div class="col rv"><h3>Verification panel</h3><p>A public panel with a stable kv:verify button. Every click is re-checked against the database, respects raid lockdown and the minimum account age, has a five-second cooldown per member and writes a member log entry.</p>
+<div class="pw g"><pre>/verification panel channel:#verify [role:@Verified]
+/verification config
+/verification remove</pre></div></div>
+<div class="col rv" style="--d:2"><h3>Tickets</h3><p>Private channels with explicit overwrites for the owner, staff role and bot. Numbers come from an atomic per-guild counter, three open tickets per member by default, and closing needs confirmation. Transcripts are off by default and never written to MongoDB.</p>
+<div class="pw g"><pre>/ticket panel channel:#support
+/ticket setup [category] [log_channel] [staff_role] [max_open:3]
+/ticket close | add | remove | claim | list</pre></div></div>
+</div></section>
+
+<section class="wrap sec view" id="commands">
+<div class="head rv"><span class="label">Commands</span><h2 class="h2">Slash or prefix, same checks.</h2><p class="lede">Text commands use the server prefix (default !) with the same permission, hierarchy and antinuke checks as their slash counterparts.</p></div>
+<div class="two">
+<div class="col rv"><h3>Moderation</h3>
+<div class="chips"><span class="chip">/ban</span><span class="chip">/unban</span><span class="chip">/kick</span><span class="chip">/timeout</span><span class="chip">/untimeout</span><span class="chip">/warn</span><span class="chip">/warnings</span><span class="chip">/purge</span><span class="chip">/clear</span><span class="chip">/slowmode</span><span class="chip">/lock</span><span class="chip">/unlock</span><span class="chip">/hide</span><span class="chip">/unhide</span><span class="chip">/nickname</span><span class="chip">/role</span><span class="chip">/softban</span><span class="chip">/massban</span><span class="chip">/masskick</span><span class="chip">/case</span><span class="chip">/banlist</span></div>
+<p>The /security dashboard covers modules, thresholds, punishments, whitelist, logs, raid and diagnostics. /help is generated from the real command definitions.</p></div>
+<div class="col rv" style="--d:2"><h3>Text commands</h3>
+<div class="pw g"><pre>!help
+!ping
+!ban @member spam
+!timeout @member 10m spam
+!ban @member reason:"spam and eggs" delete_days:7
+!ticket panel #support</pre></div>
+<p>Mentions, IDs, #channel, @role, numbers, choices and quoted strings all parse as typed arguments.</p></div>
+</div></section>
+
+<section class="wrap sec view" id="setup">
+<div class="head rv"><span class="label">Setup</span><h2 class="h2">Running in six steps.</h2><div class="actions"><a class="btn p" href="https://discord.com/oauth2/authorize?client_id=1570097060718575728" target="_blank" rel="noopener">Add to Discord</a><a class="btn" href="https://discord.gg/mkWrmXpU8E" target="_blank" rel="noopener">Support server</a></div></div>
+<div class="steps">
+<div class="step g rv"><span class="n">01</span><div><h3>Open /security</h3><p>Server owner, bot owner or a Trusted Administrator.</p></div></div>
+<div class="step g rv" style="--d:1"><span class="n">02</span><div><h3>Pick log channels</h3><p>At least Antinuke, Raid, Moderation and Ticket.</p></div></div>
+<div class="step g rv" style="--d:2"><span class="n">03</span><div><h3>Whitelist trusted staff and bots</h3><p>Their legitimate bulk actions can otherwise trigger a response.</p></div></div>
+<div class="step g rv" style="--d:3"><span class="n">04</span><div><h3>Review each module</h3><p>Check thresholds and punishments under Protection.</p></div></div>
+<div class="step g rv" style="--d:4"><span class="n">05</span><div><h3>Post the verification panel</h3><p>/verification panel channel:#verify</p></div></div>
+<div class="step g rv" style="--d:5"><span class="n">06</span><div><h3>Configure tickets</h3><p>/ticket setup, then /ticket panel.</p></div></div>
+</div></section>
+
+<section class="wrap sec view" id="developers">
+<div class="head rv"><span class="label">Developers</span><h2 class="h2">The people behind it.</h2><p class="lede">Live Discord status and activity for each developer, refreshed every 30 seconds through Lanyard.</p></div>
+<div class="devs" id="devs"></div>
+</section>
+
+<section class="wrap sec view" id="terms">
+<div class="head rv"><span class="label">Terms of Service</span><h2 class="h2">The rules for using Kurisu.</h2><p class="lede">Last updated November 22, 2026. Adding Kurisu to a server or using its commands means you agree to these terms.</p></div>
+<div class="tos">
+<div class="cl rv"><h3>Acceptance</h3><p>By adding Kurisu Security to a server, using its commands or buttons, or using this website, you agree to these terms and to Discord’s Terms of Service and Community Guidelines. If you do not agree, remove Kurisu from your server and stop using it.</p></div>
+<div class="cl rv"><h3>What Kurisu does</h3><p>Kurisu is a Discord bot for antinuke protection, raid protection, whitelisting, verification, tickets and moderation. It watches events in the servers where it is installed and responds according to the settings that server chose.</p></div>
+<div class="cl rv"><h3>Your responsibilities</h3><p>You are responsible for how Kurisu is configured in your server, including thresholds, punishments, the whitelist and log channels, and for the people you trust with those settings. Kurisu can only act within the permissions and role position you give it, because Discord’s role hierarchy limits what any bot can do.</p></div>
+<div class="cl rv"><h3>Automated actions</h3><p>Kurisu can ban, kick, time out, quarantine or strip roles from members, and can restore channels and roles, without a person approving each action. Automated systems can make mistakes. Server administrators can review and reverse a punishment with Discord’s tools or Kurisu’s moderation commands.</p></div>
+<div class="cl rv"><h3>No guarantee</h3><p>Kurisu lowers risk but cannot guarantee protection. Discord’s API has limits: deleted messages cannot be recovered, restored channels and roles get new IDs, and the server icon, banner and vanity URL cannot be restored. Kurisu is provided as is, without warranties, and may be unavailable or change at any time.</p></div>
+<div class="cl rv"><h3>Acceptable use</h3><p>Do not use Kurisu to harass or target people, to break Discord’s rules or the law, or to attack other servers or bots. Do not try to bypass its protections, cooldowns or rate limits, reverse engineer it, or overload it.</p></div>
+<div class="cl rv"><h3>Data</h3><p>To work, Kurisu stores server settings, whitelist entries, moderation cases and warnings, incident and join logs, verification and ticket records, and the Discord IDs they refer to. Ticket transcripts are off by default and are never written to the database. To ask about or request removal of your server’s data, contact us in the <a href="https://discord.gg/mkWrmXpU8E" target="_blank" rel="noopener">support server</a>.</p></div>
+<div class="cl rv"><h3>Access and termination</h3><p>We may limit or remove access to Kurisu for any server or user that breaks these terms, abuses the service or puts it at risk, with or without notice. You can stop using Kurisu at any time by removing it from your server.</p></div>
+<div class="cl rv"><h3>Liability</h3><p>To the fullest extent the law allows, the Kurisu Security team is not liable for indirect or consequential losses, including lost data, lost members or damage to a server, that result from using Kurisu or from it being unavailable.</p></div>
+<div class="cl rv"><h3>Changes and contact</h3><p>We may update these terms, and the date at the top shows the latest version. Using Kurisu after a change means you accept the update. Questions about these terms can go to the <a href="https://discord.gg/mkWrmXpU8E" target="_blank" rel="noopener">support server</a>.</p></div>
+</div></section>
+
+<footer class="wrap foot"><span>Kurisu Security 2.1.0</span><nav class="fl" aria-label="Legal and support"><a href="#terms">Terms of Service</a><a href="https://discord.gg/mkWrmXpU8E" target="_blank" rel="noopener">Support server</a></nav><span class="mono">discord.js 14 · Components V2 · MongoDB</span></footer>
+</main>
+
+<script>
+(function(){
+var $=function(s,r){return(r||document).querySelector(s)},$$=function(s,r){return[].slice.call((r||document).querySelectorAll(s))};
+var RM=matchMedia('(prefers-reduced-motion:reduce)').matches,root=document.documentElement,isl=$('#isl'),pill=$('#pill'),cur=$('#cur');
+
+/* developers + Lanyard (live when hosted on your own site) */
+var DEVS=[['1521890728094208122','a0','#6f86ff','tfw%20no%20elf%20ears.gif'],['1124369205727330346','a1','#c66fff','download%20(5).gif'],['1441623190412726355','a2','#3fd0c9','IMG_8771.gif'],['1530686788824469646','a3','#ff7a9c','download%20(3).gif'],['1538978329082863796','a4','#8affb0','ascii-art%20(7).gif']];
+var LB={online:'Online',idle:'Idle',dnd:'Do not disturb',offline:'Offline'},box=$('#devs');
+DEVS.forEach(function(d){var a=document.createElement('article');a.className='dev g rv';a.style.setProperty('--ac',d[2]);
+a.innerHTML='<div class="bn"><img alt="" loading="lazy" src="https://file.garden/am9m147l3hw3nqT1/'+d[3]+'" onerror="this.remove()"></div><div class="db"><div class="av" data-f="av">D</div><h3 class="dn" data-f="n">Developer</h3><span class="dh" data-f="h" hidden></span><span class="dr">Developer</span><div class="ds"><span class="sd offline" data-f="sd"></span><span data-f="sl">Loading status</span></div><p class="da" data-f="ac" hidden></p><span class="di">ID '+d[0]+'</span></div>';
+box.appendChild(a);d.push(a)});
+function F(a,k){return $('[data-f='+k+']',a)}
+function put(d,r){var a=d[4];
+if(!r){F(a,'sl').textContent='Status unavailable';return}
+if(r.miss){F(a,'sl').textContent='Not on Lanyard';return}
+var u=r.discord_user||{},nm=u.global_name||u.username||'Developer',st=r.discord_status||'offline',av=F(a,'av');
+F(a,'n').textContent=nm;var h=F(a,'h');h.hidden=!u.username;h.textContent=u.username?'@'+u.username:'';
+if(u.avatar){var s='https://cdn.discordapp.com/avatars/'+u.id+'/'+u.avatar+(String(u.avatar).indexOf('a_')===0?'.gif':'.png')+'?size=256';if(av.dataset.s!==s){av.dataset.s=s;av.innerHTML='';var i=new Image();i.className='av';i.style.cssText='margin:0;width:100%;height:100%;border:0';i.alt='';i.src=s;i.onerror=function(){av.textContent=nm.charAt(0).toUpperCase()};av.style.overflow='hidden';av.appendChild(i)}}else av.textContent=nm.charAt(0).toUpperCase();
+F(a,'sd').className='sd '+st;F(a,'sl').textContent=LB[st]||'Offline';
+var ac=r.activities||[],cu=ac.filter(function(x){return x.type===4})[0],ot=ac.filter(function(x){return x.type!==4})[0],t='';
+if(r.listening_to_spotify&&r.spotify)t='Listening to '+r.spotify.song+' by '+r.spotify.artist;else if(ot)t=(ot.type===0?'Playing ':'')+ot.name+(ot.details?' / '+ot.details:'');else if(cu&&cu.state)t=cu.state;
+var p=F(a,'ac');p.hidden=!t;p.textContent=t}
+function poll(){DEVS.forEach(function(d){try{fetch('https://api.lanyard.rocks/v1/users/'+d[0]).then(function(r){return r.json()}).then(function(j){put(d,j&&j.success?j.data:{miss:1})}).catch(function(){put(d,null)})}catch(e){put(d,null)}})}
+poll();setInterval(poll,30000);
+/* servers + users (PLACEHOLDERS: replaced by /api/stats when the site is served by web.js; static hosting keeps these) */
+var PROOF={users:'00,000',servers:'000',list:[]};
+for(var q=0;q<10;q++)PROOF.list.push({name:'Server name',members:0,icon:''});
+var PROOF_READY=false;
+function num(n){n=Number(n);return isFinite(n)?Math.round(n).toLocaleString('en-US'):'0'}
+function proof(){$('#pu').textContent=PROOF.users;$('#ps').textContent=PROOF.servers;
+/* the reel is only shown once there are real servers to show */
+var rl=$('.reel'),track=$('#trk');track.textContent='';
+if(!PROOF_READY){if(rl)rl.setAttribute('hidden','');return}
+if(rl)rl.removeAttribute('hidden');
+track.style.setProperty('--dur',Math.max(20,PROOF.list.length*6)+'s');
+for(var k=0;k<2;k++)PROOF.list.forEach(function(s){
+var c=document.createElement('div'),i=document.createElement('span'),n=document.createElement('span'),m=document.createElement('span');
+c.className='srv';if(k)c.setAttribute('aria-hidden','true');i.className='si';n.className='sn';m.className='sm';
+if(s.icon){var g=new Image();g.alt='';g.loading='lazy';g.src=s.icon;i.appendChild(g)}
+n.textContent=s.name||'Server';m.textContent=num(s.members)+' members';
+c.appendChild(i);c.appendChild(n);c.appendChild(m);track.appendChild(c)})}
+/* live counts: /api/stats from the bot (web.js). Placeholders stay if it is not served. */
+function apply(s){if(!s||!isFinite(Number(s.users)))return;
+PROOF_READY=true;PROOF.users=num(s.users);PROOF.servers=num(s.communities);
+if(Array.isArray(s.list)&&s.list.length)PROOF.list=s.list;proof()}
+function live(){fetch('/api/stats',{cache:'no-store'}).then(function(r){return r.ok?r.json():null}).then(apply).catch(function(){})}
+proof();
+live();setInterval(live,60000);
+setTimeout(function(){if(!PROOF_READY){var p=$('.pow');if(p)p.title='Live counts need the site server (npm run web)'}},8000);
+
+/* copy buttons */
+function flash(t){cur.textContent=t;isl.classList.add('pop');clearTimeout(flash.t);flash.t=setTimeout(function(){isl.classList.remove('pop');cur.textContent=curL},1700)}
+var curL='Kurisu Security';
+$$('pre').forEach(function(p){var w=p.parentNode,b=document.createElement('button');b.className='btn cp';b.type='button';b.textContent='Copy';b.setAttribute('aria-label','Copy code');
+b.onclick=function(){var t=p.textContent,ok=function(){b.textContent='Copied';flash('Copied \u2713');setTimeout(function(){b.textContent='Copy'},1700)};
+function fb(){var x=document.createElement('textarea');x.value=t;x.style.cssText='position:fixed;opacity:0';document.body.appendChild(x);x.select();try{document.execCommand('copy')}catch(e){}x.remove();ok()}
+try{navigator.clipboard.writeText(t).then(ok,fb)}catch(e){fb()}};w.appendChild(b)});
+
+/* island */
+$$('.il>*').forEach(function(e,i){e.style.setProperty('--i',i)});
+var hov=matchMedia('(hover:hover)').matches,ct;
+function tog(v){isl.classList.toggle('open',v);pill.setAttribute('aria-expanded',v)}
+pill.onclick=function(){tog(!isl.classList.contains('open'))};
+if(hov){isl.onmouseenter=function(){clearTimeout(ct);tog(true)};isl.onmouseleave=function(){ct=setTimeout(function(){tog(false)},260)}}
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){tog(false);pill.focus()}});
+document.addEventListener('pointerdown',function(e){if(!isl.contains(e.target))tog(false)});
+$('#il').addEventListener('click',function(e){if(e.target.closest('a'))tog(false)});
+/* views: the navbar shows one section at a time */
+var VW=$$('.view'),NM={},hm=1,LK=$$('#il a:not(.btn)');
+LK.forEach(function(a){NM[a.hash.slice(1)]=a.textContent});NM.terms="Terms of Service";
+function dim(){$('#bg').style.opacity=hm?.5:.28}
+function show(id){if(!NM[id])id='home';hm=id==='home';
+VW.forEach(function(v){v.classList.toggle('act',v.id===id)});
+LK.forEach(function(a){var c=a.hash==='#'+id;a.classList.toggle('cur',c);if(c)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});
+var t=hm?'Kurisu Security':NM[id];
+if(t!==curL){curL=t;cur.classList.add('sw');setTimeout(function(){if(!isl.classList.contains('pop'))cur.textContent=t;cur.classList.remove('sw')},200)}
+scrollTo({top:0,behavior:'instant'});isl.style.setProperty('--p',0);dim()}
+addEventListener('hashchange',function(){show(location.hash.slice(1))});
+show(location.hash.slice(1));
+var tk;addEventListener('scroll',function(){if(tk)return;tk=requestAnimationFrame(function(){tk=0;var y=scrollY,m=document.body.scrollHeight-innerHeight;isl.style.setProperty('--p',m>0?Math.min(1,y/m):0);dim()})},{passive:true});
+
+
+/* glass spotlight */
+document.addEventListener('pointermove',function(e){var g=e.target.closest&&e.target.closest('.g');if(!g)return;var r=g.getBoundingClientRect();g.style.setProperty('--mx',e.clientX-r.left+'px');g.style.setProperty('--my',e.clientY-r.top+'px')},{passive:true});
+
+/* reveals + count-up */
+var rio=new IntersectionObserver(function(en){en.forEach(function(x){if(!x.isIntersecting)return;var t=x.target;t.classList.add('vis');rio.unobserve(t);$$('[data-n]',t).forEach(function(b){var n=+b.dataset.n;if(RM)return;var s=performance.now();(function f(now){var k=Math.min(1,(now-s)/1400);b.textContent=Math.round(n*(k===1?1:1-Math.pow(2,-10*k)));if(k<1)requestAnimationFrame(f)})(s)})})},{threshold:.15});
+var obs=function(){$$('.rv').forEach(function(e){rio.observe(e)})};
+$$('[data-n]').forEach(function(b){if(!RM)b.textContent='0'});
+/* the background is the intro: the dot field ignites, spells the wordmark, then settles */
+(function(){var c=$('#bg'),x=c.getContext('2d'),lk=$('#lk'),iv=$('#intro'),CELL=6,LV=12,W=1,H=1,dpr=1,cols=0,rows=0,hs=null,mx=0,tx=0,fc=0,raf=0,t0=0,dn=0,rv=0,seen=0,sb=0,END=3600;
+try{seen=sessionStorage.getItem('kv')}catch(e){}
+function cl(v){return v<0?0:v>1?1:v}
+function sm(a,b,v){var k=cl((v-a)/(b-a));return k*k*(3-2*k)}
+function rg(y0,y1,st,sc){var g=x.createLinearGradient(0,y0,0,y1);st.forEach(function(s){g.addColorStop(s[0],'rgba(255,255,255,'+(s[1]*sc).toFixed(3)+')')});return g}
+function draw(n){var t=n/1000,g=1,rim=1;
+x.setTransform(dpr,0,0,dpr,0,0);x.globalAlpha=1;x.shadowBlur=0;x.fillStyle='#060606';x.fillRect(0,0,W,H);
+var VH=Math.min(H,W*.66),br=Math.sin(t*.35),sw=Math.sin(t*.21+1.3),gx=W*.5+mx*W*.03+Math.sin(t*.13)*W*.012,gy=VH*(.36+.05*sw),gap=VH*(.01+.007*(.5+.5*br)),RL=Math.max(2,VH*(.7+.012*br)*g),RR=Math.max(2,VH*(1+.015*Math.sin(t*.28+2))*g),lx=gx-gap/2-RL,rx=gx+gap/2+RR,P=[],i,j,k;
+for(i=0;i<LV;i++)P.push(new Path2D());
+for(j=0;j<rows;j++){var y=(j+.5)*CELL,fr=1-sm(.42*VH,VH,y),dy=y-gy;for(i=0;i<cols;i++){var X=(i+.5)*CELL,id=j*cols+i,h=hs[id],a=X-lx,b=X-rx,iL=RL-Math.sqrt(a*a+dy*dy),iR=RR-Math.sqrt(b*b+dy*dy),vL,vR,v,d;
+vL=iL>0?.9*Math.exp(-iL/(.12*RL))+.12*Math.exp(-iL/(.7*RL)):.1*Math.exp(iL/(.04*RL));
+vR=iR>0?(.85*Math.exp(-iR/(.11*RR))+.1*Math.exp(-iR/(.8*RR)))*(.15+.85*fr):.08*Math.exp(iR/(.04*RR))*fr;
+if(vL>=vR){v=vL;d=iL}else{v=vR;d=iR}
+if(v<.035)continue;
+v*=(.82+.18*Math.sin(d*.035-t*.9))*(.8+.2*Math.sin(t*(.6+h*1.4)+h*40));
+var lv=Math.min(LV-1,(v*LV*1.05)|0);if(lv<=0)continue;var s=1+lv*.32;P[lv].rect(X-s/2,y-s/2,s,s)}}
+for(k=1;k<LV;k++){x.fillStyle='rgba(240,240,240,'+(.12+k*.075).toFixed(3)+')';x.fill(P[k])}
+var L=[[0,.85],[Math.min(.99,Math.max(.01,gy/(VH*1.2))),1],[1,.5]],R=[[0,1],[Math.min(.99,Math.max(.01,gy/(VH*.95))),1],[1,0]],Y=[[22,.07],[9,.2],[2.2,1]];
+x.lineCap='round';
+for(k=0;k<3;k++){x.lineWidth=Y[k][0];x.shadowColor='rgba(255,255,255,.9)';x.shadowBlur=k===2?26:0;
+x.strokeStyle=rg(0,VH*1.2,L,Y[k][1]*rim);x.beginPath();x.arc(lx,gy,RL,-1,-1+3.1*rim);x.stroke();
+x.strokeStyle=rg(0,VH*.95,R,Y[k][1]*rim);x.beginPath();x.arc(rx,gy,RR,Math.PI-1,Math.PI-1+2*rim);x.stroke()}
+x.shadowBlur=0;var gl=x.createRadialGradient(gx,gy,0,gx,gy,VH*.16);gl.addColorStop(0,'rgba(255,255,255,'+(.32*rim).toFixed(3)+')');gl.addColorStop(1,'rgba(255,255,255,0)');x.fillStyle=gl;x.fillRect(gx-VH*.2,gy-VH*.2,VH*.4,VH*.4);
+}
+function size(){dpr=Math.min(devicePixelRatio||1,2);W=Math.max(1,innerWidth);H=Math.max(1,innerHeight);c.width=Math.round(W*dpr);c.height=Math.round(H*dpr);cols=Math.ceil(W/CELL)+1;rows=Math.ceil(H/CELL)+1;hs=new Float32Array(cols*rows);for(var i=0;i<hs.length;i++)hs[i]=Math.random();if(RM)draw(2200)}
+var TX='Architect of the best antinuke.',tg=$('#tg'),bp=$('#bp');
+/* blueprint: guides and circle are measured around the hero wordmark, then KURISU is traced by one line */
+function build(){var hk=$('.kw'),cn=0,pr=document.createElement('i'),g=document.createElement('canvas').getContext('2d');
+if(!hk.getClientRects().length){cn=hk=hk.cloneNode(true);cn.style.cssText='position:fixed;left:0;right:0;top:50%;margin-top:-.5em;visibility:hidden';iv.appendChild(cn)}
+var ks=$$('.kl',hk),fs=parseFloat(getComputedStyle(hk).fontSize),o=cn?0:sb/2;
+pr.style.cssText='display:inline-block;width:0;height:0';ks[0].appendChild(pr);
+var by=pr.getBoundingClientRect().bottom,rs=ks.map(function(k){return k.getBoundingClientRect()});pr.remove();if(cn)cn.remove();
+g.font='200 '+fs+'px Archivo';
+var cp=g.measureText('K').actualBoundingBoxAscent||fs*.7,x0=rs[0].left-o-.06*fs,x1=rs[rs.length-1].right-o,cx=(x0+x1)/2,cy=by-cp/2,
+R=Math.max(60,Math.min((x1-x0)*.54,cy-16,H-cy-16,W*.48)),yc=cy-R*.5,
+ln=function(a,b,p,q,t,s,st){return '<line class="bl" pathLength="1" x1="'+a.toFixed(1)+'" y1="'+b.toFixed(1)+'" x2="'+p.toFixed(1)+'" y2="'+q.toFixed(1)+'" style="--d:'+t.toFixed(2)+'s;--t:'+s.toFixed(2)+'s;'+(st||'')+'"/>'},
+dt=function(a,b,p,q){return '<line class="bd" x1="'+a.toFixed(1)+'" y1="'+b.toFixed(1)+'" x2="'+p.toFixed(1)+'" y2="'+q.toFixed(1)+'" style="--d:.9s"/>'},
+h='<defs><linearGradient id="fg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="'+W+'" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".14" stop-color="#fff" stop-opacity=".5"/><stop offset=".86" stop-color="#fff" stop-opacity=".5"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>';
+[by-cp-.42*fs,by-cp,by-cp/2,by,by+.07*fs,by+.12*fs,by+.19*fs].forEach(function(y,i){h+=ln(0,y,W,y,i*.07,1.3,'stroke:url(#fg)')});
+h+=ln(x0,0,x0,H,.1,1.5)+ln(x1,0,x1,H,.2,1.5);
+[-1,1].forEach(function(sg){for(var j=0;j<3;j++){var xc=cx+(j-1)*9,k=.6*sg;h+=ln(xc+k*(-20-yc),-20,xc+k*(H+20-yc),H+20,.3+j*.06,1.8,'stroke:rgba(255,255,255,.28)')}});
+h+='<circle class="bd" cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="'+R.toFixed(1)+'" style="--d:.5s"/><circle class="bd" cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="'+(R*.5).toFixed(1)+'" style="--d:.7s"/>'+dt(cx-R*.87,cy-R*.5,cx+R*.87,cy+R*.5)+dt(cx+R*.87,cy-R*.5,cx-R*.87,cy+R*.5)+dt(cx,cy-R,cx,cy+R);
+rs.forEach(function(r,i){h+='<text class="bt" x="'+(r.left-o).toFixed(1)+'" y="'+by.toFixed(1)+'" style="--d:'+(.5+i*.17).toFixed(2)+'s;--f:'+(1.65+i*.17).toFixed(2)+'s">'+ks[i].textContent+'</text>'});
+bp.setAttribute('width',W);bp.setAttribute('height',H);bp.style.setProperty('--fs',fs+'px');bp.style.setProperty('--dl',Math.round(fs*4.4));
+tg.style.setProperty('--ty',Math.min(by+.19*fs+44,H-96).toFixed(0)+'px');bp.innerHTML=h;void bp.getBoundingClientRect()}
+function tick(el){var n=Math.max(0,Math.min(TX.length,((el-1600)/38)|0));if(tg.dataset.n!=n){tg.dataset.n=n;tg.innerHTML=TX.slice(0,n)+'<i></i><span>'+TX.slice(n)+'</span>'}}
+function reveal(){if(rv)return;rv=1;root.classList.add('in');isl.classList.add('on');obs();document.body.style.overflow='';lk.classList.remove('v');try{sessionStorage.setItem('kv','1')}catch(e){}}
+function loop(n){mx+=(tx-mx)*.04;if(t0&&!dn){var el=n-t0;tick(el);if(el>END)iv.classList.add("out");if(el>END+50)reveal();if(el>END+1100)dn=1}if((fc++&1)===0)draw(n);raf=requestAnimationFrame(loop)}
+function start(){if(t0)return;t0=performance.now();try{build()}catch(e){dn=1;reveal();return}root.classList.add("tr");iv.classList.add("go");setTimeout(function(){if(!rv)lk.classList.add('v')},900)}
+function skip(){start();var n=performance.now();if(n-t0<END)t0=n-END}
+addEventListener('resize',size);
+if(RM||seen){dn=1;size();reveal()}else{sb=innerWidth-root.clientWidth;document.body.style.overflow='hidden';size();addEventListener('keydown',skip,{once:true});addEventListener('pointerdown',skip,{once:true});
+Promise.race([document.fonts.load('200 expanded 100px "Archivo"'),new Promise(function(r){setTimeout(r,900)})]).then(start,start)}
+if(!RM){addEventListener('pointermove',function(e){tx=(e.clientX/W-.5)*2},{passive:true});raf=requestAnimationFrame(loop);
+document.addEventListener('visibilitychange',function(){cancelAnimationFrame(raf);if(!document.hidden)raf=requestAnimationFrame(loop)})}
+})();
+})();
+</script>
+</body>
+</html>

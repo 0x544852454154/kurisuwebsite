@@ -57,6 +57,11 @@ async function main() {
     fatal('a command module failed to load', err);
   }
 
+  // Website: index.html plus /api/stats, which feeds the live counts.
+  if (process.env.SERVE_WEB === 'true') {
+    try { require('./web/site').start(client); } catch (err) { log.warn('web server did not start', err); }
+  }
+
   for (const ev of [...events, ...guildLogs]) {
     const run = (...args) => Promise.resolve(ev.execute(...args, client)).catch((err) => log.error(`event ${ev.name} failed`, err));
     if (ev.once) client.once(ev.name, (...a) => run(...a)); else client.on(ev.name, run);
