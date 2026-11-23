@@ -73,6 +73,7 @@ function channelSelect(customId, placeholder) {
  *   ActionRowBuilder     -> action row
  *   { section: text, thumbnail: url } | { section: text, button: ButtonBuilder }
  *   { media: url }       -> media gallery (images and animated GIFs)
+ *   { media: [url, ...] } -> several images side by side in one gallery
  * No accent colour is ever set.
  */
 function container(items) {
@@ -89,7 +90,12 @@ function container(items) {
       else if (it.button) s.setButtonAccessory(it.button);
       c.addSectionComponents(s);
     } else if (it.media) {
-      c.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(it.media)));
+      const urls = [].concat(it.media);
+      // A gallery's height follows its row count, not its width: a single item is
+      // rendered as one large image, while a wide GIF next to another item in the
+      // same row gets squeezed. `wide` keeps the media alone in its own gallery.
+      const gallery = new MediaGalleryBuilder().addItems(urls.slice(0, 10).map((url) => new MediaGalleryItemBuilder().setURL(url)));
+      c.addMediaGalleryComponents(gallery);
     }
   }
   return c;

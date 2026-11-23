@@ -85,16 +85,19 @@ function sentence(action, actor, target, clientId = null) {
   return tpl.replace('{a}', a).replace('{b}', b);
 }
 
-/** Render a V2 payload for an action. Grey-only, no accent colour, no embeds. */
+/**
+ * Render a V2 payload for an action. Grey-only, no accent colour, no embeds.
+ * The GIF sits in its own media gallery directly under a short headline: one
+ * item in a gallery renders at the largest size Discord allows, and spacing the
+ * text out above it would only make the image smaller.
+ */
 function render(name, actor, target, clientId = null) {
   const action = ACTIONS[name];
   if (!action) return null;
   const gif = nextGif(name);
   const head = action.emoji ? `${action.emoji} ${action.title}` : action.title;
   const items = [
-    `### ${head}`,
-    sentence(action, actor, target, clientId),
-    'sep',
+    `### ${head}\n${sentence(action, actor, target, clientId)}`,
   ];
   if (gif) items.push({ media: gif });
   items.push(`-# Requested by <@${actor.id}>`);

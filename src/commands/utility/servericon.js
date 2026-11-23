@@ -13,14 +13,16 @@ module.exports = {
     const err = guard(i, {});
     if (err) return fail(i, err);
     const g = i.guild;
-    const icon = g.iconURL({ extension: 'png', size: 1024 });
+    const animated = g.icon?.startsWith('a_');
+    const icon = g.iconURL({ extension: animated ? 'gif' : 'png', size: 4096 });
     if (!icon) return i.reply(ui.message([`### ${E.modernStaff} SERVER ICON`, 'sep', `**${g.name}** has no icon set.`], { ephemeral: true }));
+    const links = [`[PNG](${g.iconURL({ extension: 'png', size: 4096 })})`, `[WEBP](${g.iconURL({ extension: 'webp', size: 4096 })})`];
+    if (animated) links.push(`[GIF](${g.iconURL({ extension: 'gif', size: 4096 })})`);
     return i.reply(ui.message([
       `### ${E.modernStaff} SERVER ICON`,
       { section: `**${g.name}**\n-# ID ${g.id}`, thumbnail: g.iconURL({ extension: 'png', size: 256 }) },
-      'sep',
       { media: icon },
-      `-# [PNG](${icon})  ·  [WEBP](${g.iconURL({ extension: 'webp', size: 1024 })})${g.icon?.startsWith('a_') ? `  ·  [GIF](${g.iconURL({ extension: 'gif', size: 1024 })})` : ''}`,
+      `-# ${links.join('  ·  ')}`,
     ]));
   },
 };

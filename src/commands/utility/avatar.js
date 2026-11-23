@@ -15,15 +15,20 @@ module.exports = {
     if (err) return fail(i, err);
     const user = i.options.getUser('user') || i.user;
     const member = i.options.getMember('user') || null;
+    const animated = user.avatar?.startsWith('a_');
+    // Largest CDN size; the gallery item is the only node between the header and
+    // the links, so Discord renders it full width.
+    const image = user.displayAvatarURL({ extension: animated ? 'gif' : 'png', size: 4096 });
+    const links = [`[PNG](${user.displayAvatarURL({ extension: 'png', size: 4096 })})`, `[WEBP](${user.displayAvatarURL({ extension: 'webp', size: 4096 })})`];
+    if (animated) links.push(`[GIF](${user.displayAvatarURL({ extension: 'gif', size: 4096 })})`);
     return i.reply(ui.message([
       `### ${E.modernStaff} AVATAR`,
       {
         section: `**${user.username}**\n-# \`${user.id}\`${member?.displayAvatarURL && member.displayAvatarURL() !== user.displayAvatarURL() ? '  ·  server avatar' : ''}`,
         thumbnail: user.displayAvatarURL({ extension: 'png', size: 256 }),
       },
-      'sep',
-      { media: user.displayAvatarURL({ extension: 'png', size: 1024 }) },
-      `-# [PNG](${user.displayAvatarURL({ extension: 'png', size: 1024 })})  ·  [WEBP](${user.displayAvatarURL({ extension: 'webp', size: 1024 })})${user.avatar?.startsWith('a_') ? `  ·  [GIF](${user.displayAvatarURL({ extension: 'gif', size: 1024 })})` : ''}`,
+      { media: image },
+      `-# ${links.join('  ·  ')}`,
     ]));
   },
 };

@@ -16,17 +16,19 @@ module.exports = {
     let user = i.options.getUser('user') || i.user;
     // The user option payload does not include the banner; fetch the full user.
     user = await i.client.users.fetch(user.id, { force: true }).catch(() => user);
-    const banner = user.bannerURL?.({ extension: 'png', size: 1024 });
+    const animated = user.banner?.startsWith('a_');
+    const banner = user.bannerURL?.({ extension: animated ? 'gif' : 'png', size: 4096 });
     if (!banner) return i.reply(ui.message([`### ${E.modernStaff} BANNER`, 'sep', `**${user.username}** has no profile banner.`], { ephemeral: true }));
+    const links = [`[PNG](${user.bannerURL({ extension: 'png', size: 4096 })})`, `[WEBP](${user.bannerURL({ extension: 'webp', size: 4096 })})`];
+    if (animated) links.push(`[GIF](${user.bannerURL({ extension: 'gif', size: 4096 })})`);
     return i.reply(ui.message([
       `### ${E.modernStaff} BANNER`,
       {
         section: `**${user.username}**\n-# \`${user.id}\``,
         thumbnail: user.displayAvatarURL({ extension: 'png', size: 256 }),
       },
-      'sep',
       { media: banner },
-      `-# [PNG](${user.bannerURL({ extension: 'png', size: 1024 })})  ·  [WEBP](${user.bannerURL({ extension: 'webp', size: 1024 })})${user.banner?.startsWith('a_') ? `  ·  [GIF](${user.bannerURL({ extension: 'gif', size: 1024 })})` : ''}`,
+      `-# ${links.join('  ·  ')}`,
     ]));
   },
 };

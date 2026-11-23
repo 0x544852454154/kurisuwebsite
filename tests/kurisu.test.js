@@ -932,6 +932,62 @@ test('action: payload is V2, grey-only, accent-free and free of Unicode emoji', 
   }
 });
 
+test('action: the GIF is the only item in its gallery and nothing sparse pushes it down', () => {
+  for (const name of actionEngine.NAMES) {
+    const json = ui.container([
+      '### HEAD', 'sentence', { media: GIFS[name][0] }, '-# footer',
+    ]).toJSON();
+    const galleries = json.components.filter((n) => n.type === 12);
+    assert.equal(galleries.length, 1);
+    assert.equal(galleries[0].items.length, 1, `${name}: one item = a full-width image, several items share a row`);
+    assert.deepEqual(galleries[0].items[0].media, { url: GIFS[name][0] });
+
+    const payload = actionEngine.render(name, { id: 'owner' }, null, 'kurisu');
+    const nodes = allNodes(payload);
+    // Headline, the action sentence, the GIF and the footer: no extra separators
+    // eating vertical space around the media.
+    assert.equal(nodes.filter((n) => n.type === 14).length, 0, `${name} adds nothing between the text and the GIF`);
+    assert.equal(nodes.filter((n) => n.type === 10).length, 2, `${name}: one headline block plus one footer`);
+    const mediaGallery = nodes.find((n) => n.type === 12);
+    assert.equal(mediaGallery.items.length, 1, `${name}: the GIF is alone in its gallery`);
+  }
+});
+
+test('media: several urls share one gallery, and a gallery is capped at ten items', () => {
+  const json = ui.container([{ media: ['https://x/1.png', 'https://x/2.png', 'https://x/3.png'] }]).toJSON();
+  assert.equal(json.components.filter((n) => n.type === 12).length, 1, 'one gallery, not three');
+  assert.equal(json.components[0].items.length, 3);
+  const many = ui.container([{ media: Array.from({ length: 12 }, (_, n) => `https://x/${n}.png`) }]).toJSON();
+  assert.equal(many.components[0].items.length, 10, 'Discord allows at most ten items per gallery');
+});
+
+test('picture commands ask the CDN for a large image and keep the gallery to one item', async () => {
+  const requested = [];
+  const sized = (base, name) => (o = {}) => { requested.push(o.size); return `https://cdn.discordapp.com/${base}/${name}.${o.extension}?size=${o.size}`; };
+  const user = { id: '42', username: 'target', avatar: 'a_123', displayAvatarURL: sized('avatars/42', 'a_123'), banner: 'b_1', bannerURL: sized('banners/42', 'b_1') };
+  const guild = {
+    id: '1', name: 'Server', icon: 'a_9', iconURL: sized('icons/1', 'a_9'), ownerId: '42',
+    members: { me: { permissions: { has: () => true } }, cache: new Map() }, channels: { cache: new Map() },
+  };
+  const ok = { has: () => true };
+  const run = async (name) => {
+    let out = null;
+    await commands.get(name).execute({
+      user, guild, member: { id: '42', permissions: ok, roles: { highest: { position: 5 } } },
+      client: { users: { fetch: async () => user } }, channelId: 'c', inGuild: () => true, memberPermissions: ok,
+      reply: async (p) => { out = p; },
+      options: { getUser: () => user, getMember: () => null, getString: () => null, getInteger: () => null },
+    });
+    const galleries = allNodes(out).filter((n) => n.type === 12);
+    assert.equal(galleries.length, 1);
+    assert.equal(galleries[0].items.length, 1, `${name}: the image is alone, so it renders full width`);
+  };
+  for (const name of ['avatar', 'banner', 'servericon']) await run(name);
+  assert.ok(requested.length > 0);
+  assert.ok(requested.every((size) => size === 4096 || size === 256), `large image for display, 256 for the thumbnail: ${requested.join(',')}`);
+  assert.ok(requested.filter((size) => size === 4096).length >= 6, 'the media and its format links use the largest size');
+});
+
 test('prefix: per-guild prefix and typed ticket parsing', async () => {
   await repo.setGuild('gp', 'prefix', '?');
   assert.equal((await repo.getGuild('gp')).prefix, '?');
