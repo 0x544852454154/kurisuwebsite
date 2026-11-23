@@ -13,6 +13,7 @@ const invite = require('../components/common/invite');
 const verification = require('../components/verification');
 const tickets = require('../components/tickets');
 const premium = require('../engines/premium');
+const reminders = require('../engines/reminder');
 const warnings = require('../commands/moderation/warnings');
 const incidents = require('../commands/security/incidents');
 const banlist = require('../commands/moderation/banlist');
@@ -102,6 +103,7 @@ module.exports = [
         setInterval(() => { snapshotAll(client).catch((e) => log.error('snapshot failed', e)); }, SNAPSHOT_EVERY),
         setInterval(() => refreshPresence(client), PRESENCE_EVERY),
         setInterval(() => { premium.sweep(client).catch((e) => log.warn('premium expiry sweep failed', e)); }, PREMIUM_EVERY),
+        setInterval(() => { reminders.tick(client).catch((e) => log.warn('reminder tick failed', e)); }, 30_000),
       ];
       await raid.tick(client).catch(() => {}); // resolves lockdowns that expired while offline
     },

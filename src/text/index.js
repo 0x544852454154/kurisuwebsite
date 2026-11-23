@@ -4,6 +4,13 @@ const repo = require('../database/repo');
 const perms = require('../permissions');
 const ui = require('../components/common/ui');
 const log = require('../utils/logger');
+const { ACTIONS } = require('../engines/action');
+
+// Discord does not allow a top-level command to share the name of another
+// command's subcommand, so the interaction commands (hug, kiss, slap, ...)
+// live as subcommands of /action. These aliases make !hug, !kiss, ... work by
+// expanding to `action <name>` before parsing.
+const ACTION_ALIASES = new Set(Object.keys(ACTIONS));
 
 // Discord snowflakes are 17-20 digits today. Mentions are accepted everywhere.
 const USER_MENTION = /^<@!?(\d{17,20})>$/;
@@ -81,7 +88,7 @@ async function resolveUser(token, message) {
   if (id) {
     let member = guild.members.cache.get(id);
     if (!member) member = await guild.members.fetch(id).catch(() => null);
-    let user = member?.user || message.client.users.cache.get(id);
+    let user = member?.user || message.client.users?.cache?.get(id);
     if (!user) user = await message.client.users.fetch(id).catch(() => null);
     // A user who has left can still be unbanned by ID.
     if (!user) user = { id, tag: id, username: id, bot: false };
@@ -471,7 +478,10 @@ async function handle(message, client) {
   if (!tokens.length) return false;
 
   const cmdName = tokens.shift().toLowerCase();
-  const command = client.commands.get(cmdName);
+  // `!hug @user` is `!action hug @user`.
+  const alias = !client.commands.has(cmdName) && ACTION_ALIASES.has(cmdName) && client.commands.has('action');
+  if (alias) tokens.unshift(cmdName);
+  const command = client.commands.get(alias ? 'action' : cmdName);
   // Unknown words that happen to start with the prefix are ordinary chat.
   if (!command) return false;
 
@@ -491,6 +501,10 @@ async function handle(message, client) {
   }
 
   const subs = (json.options || []).filter((o) => o.type === T.Subcommand);
+  // An aliased form (e.g. !hug) already carries its subcommand as the first token.
+  const usageName = alias
+    ? cmdName
+    : (subs.length ? subs[0].name : cmdName);
   let sub = null;
   let defs = json.options || [];
   if (subs.length) {
@@ -509,7 +523,7 @@ async function handle(message, client) {
 
   const parsed = await parseOptions(message, defs, tokens);
   if (parsed.error) {
-    await sendReply(message, ui.error(`${parsed.error}\nUsage: \`${usage(prefix, cmdName, sub, defs)}\``));
+    await sendReply(message, ui.error(`${parsed.error}\nUsage: \`${usage(prefix, usageName, sub, defs)}\``));
     return true;
   }
 

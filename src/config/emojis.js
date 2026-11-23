@@ -42,6 +42,25 @@ const EMOJIS = {
 
   // Animated red ticket used by the ticket panel, ticket channels and help.
   ticket: '<a:437007ticket:1571389266083188757>',
+
+  // Fun and action categories. Set to null until a matching red emoji is uploaded:
+  // a null entry is skipped by validateEmojis and the category renders without an icon.
+  fun: null,
+  action: null,
+  hug: null,
+  kiss: null,
+  slap: null,
+  pat: null,
+  cuddle: null,
+  poke: null,
+  dance: null,
+  cry: null,
+  laugh: null,
+  highfive: null,
+  handshake: null,
+  sleep: null,
+  eat: null,
+  drink: null,
 };
 
 const EMOJI_RE = /^<(a?):([A-Za-z0-9_]{2,32}):(\d{17,20})>$/;
@@ -68,7 +87,9 @@ async function validateEmojis(client) {
   } catch { /* application emojis unavailable */ }
 
   for (const [key, value] of Object.entries(EMOJIS)) {
-    if (value === null) { problems.push(`${key}: no emoji ID configured (TODO: upload it and set the ID)`); continue; }
+    // null = placeholder for a category without a dedicated emoji yet; it renders
+    // without an icon and is not a delivery problem.
+    if (value === null) continue;
     const parsed = parseEmoji(value);
     if (!parsed) { problems.push(`${key}: malformed syntax ${value}`); continue; }
     if (!known.has(parsed.id)) problems.push(`${key}: emoji ${parsed.id} not visible to the bot`);

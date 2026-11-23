@@ -30,6 +30,10 @@ const verification = require('../src/components/verification');
 const tickets = require('../src/components/tickets');
 const commands = require('../src/commands').load();
 const text = require('../src/text');
+const actionEngine = require('../src/engines/action');
+const funEngine = require('../src/engines/fun');
+const reminders = require('../src/engines/reminder');
+const { GIFS } = require('../src/config/gifs');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const plain = (v) => JSON.stringify(v ?? '');
@@ -823,9 +827,11 @@ test('source regression: no Unicode emoji, raw embeds or accent colours outside 
 });
 
 test('commands: every required top-level command exists and loads with a category', () => {
-  const required = ['ban', 'unban', 'kick', 'timeout', 'untimeout', 'warn', 'warnings', 'purge', 'clear', 'slowmode', 'lock', 'unlock', 'hide', 'unhide', 'nickname', 'role', 'softban', 'massban', 'masskick', 'case', 'banlist', 'whitelist', 'security', 'antinuke', 'incidents', 'watchlist', 'guilds', 'prefix', 'help', 'ping', 'serverinfo', 'userinfo', 'dev', 'verification', 'ticket', 'premium', 'botprofile'];
+  const required = ['ban', 'unban', 'kick', 'timeout', 'untimeout', 'mute', 'unmute', 'warn', 'warnings', 'purge', 'clear', 'slowmode', 'lock', 'unlock', 'hide', 'unhide', 'nickname', 'role', 'softban', 'massban', 'masskick', 'case', 'banlist', 'whitelist', 'security', 'antinuke', 'incidents', 'watchlist', 'guilds', 'prefix', 'help', 'ping', 'serverinfo', 'userinfo', 'avatar', 'banner', 'servericon', 'membercount', 'say', 'poll', 'reminder', 'dev', 'verification', 'ticket', 'premium', 'botprofile', 'action', 'joke', 'fact', 'meme', 'roast', 'eightball', 'coinflip', 'dice', 'ship', 'lovecalc', 'iq', 'hot', 'simp', 'toxic', 'dumb', 'luck'];
   for (const name of required) assert.ok(commands.has(name), `missing /${name}`);
-  assert.equal(commands.size, 42);
+  assert.equal(commands.size, 67);
+  // Every fun command is a real top-level command so `!joke`, `!iq`, ... work.
+  for (const name of Object.keys(funEngine.RATE_TITLES)) assert.equal(commands.get(name).category, 'fun');
   assert.deepEqual(commands.get('ticket').data.toJSON().options.map((o) => o.name), ['panel', 'setup', 'close', 'add', 'remove', 'claim', 'list']);
   assert.deepEqual(commands.get('premium').data.toJSON().options.map((o) => o.name), ['enable', 'activate', 'disable', 'list']);
   assert.ok(commands.get('verification').data.toJSON().options.some((o) => o.name === 'panel'));
@@ -834,10 +840,10 @@ test('commands: every required top-level command exists and loads with a categor
 test('help: generated from real command definitions and covers tickets, premium and profile', () => {
   const entries = help.collect(commands);
   assert.ok(entries.length >= 70);
-  for (const name of ['ticket.panel', 'ticket.setup', 'verification.panel', 'verification.config', 'premium.enable', 'premium.list', 'botprofile.avatar']) {
+  for (const name of ['ticket.panel', 'ticket.setup', 'verification.panel', 'verification.config', 'premium.enable', 'premium.list', 'botprofile.avatar', ...actionEngine.NAMES.map((n) => `action.${n}`)]) {
     assert.ok(entries.some((e) => e.key === name), `missing help entry ${name}`);
   }
-  assert.ok(help.CATEGORIES.tickets && help.CATEGORIES.premium);
+  assert.ok(help.CATEGORIES.tickets && help.CATEGORIES.premium && help.CATEGORIES.action && help.CATEGORIES.fun);
   const rendered = help.mainView('owner', '!');
   const payload = ui.message(rendered);
   assert.ok(buttonNodes(payload).every((b) => b.style === 2));
@@ -868,6 +874,64 @@ test('text commands: help and ping reply with V2 payloads through the prefix pip
   assert.equal(await text.handle(message, client), false);
 });
 
+test('action: /action carries every interaction and the prefix aliases resolve to it', async () => {
+  const action = commands.get('action');
+  const subs = action.data.toJSON().options.map((o) => o.name);
+  assert.deepEqual(subs, ['hug', 'kiss', 'slap', 'pat', 'cuddle', 'poke', 'dance', 'cry', 'laugh', 'highfive', 'handshake', 'sleep', 'eat', 'drink']);
+  assert.equal(action.category, 'action');
+  // No top-level command may share a name with an action (Discord rejects that).
+  for (const name of subs) assert.ok(!commands.has(name), `top-level /${name} would collide`);
+
+  const { guild, addMember } = fakeGuild({ id: 'gaction', ownerId: 'owner' });
+  const member = addMember('owner');
+  member.permissions = { has: () => true };
+  member.user = { id: 'owner', bot: false, tag: 'owner#0001', username: 'owner' };
+  const target = addMember('123456789012345678');
+  target.user = { id: '123456789012345678', bot: false, tag: 'friend#0001', username: 'friend' };
+  const client = fakeClient([guild]);
+  const sent = [];
+  const message = {
+    guild, member, client, content: '!hug <@123456789012345678>',
+    author: { id: 'owner', bot: false, tag: 'owner#0001', username: 'owner' },
+    channel: { id: 'c1', name: 'general', permissionsFor: () => ({ has: () => true }) },
+    reply: async (payload) => { sent.push(payload); return { edit: async () => {} }; },
+  };
+  await repo.setGuild(guild.id, 'prefix', '!');
+  text.clearPrefix(guild.id);
+  assert.equal(await text.handle(message, client), true);
+  assert.ok(Number(sent[0].flags) & MessageFlags.IsComponentsV2);
+  const content = plain(sent[0]);
+  assert.match(content, /<@owner> hugs <@123456789012345678>/);
+  assert.ok(content.includes(GIFS.hug[0]), 'the hug GIF is attached');
+
+  // Without a target the action applies to the author.
+  sent.length = 0; message.content = '!dance';
+  assert.equal(await text.handle(message, client), true);
+  assert.match(plain(sent[0]), /<@owner> dances\./);
+});
+
+test('action: GIF list is complete, https-only and rotates without repeats', () => {
+  for (const name of actionEngine.NAMES) {
+    const list = GIFS[name];
+    assert.ok(Array.isArray(list) && list.length >= 4, `${name} needs at least 4 GIFs`);
+    for (const url of list) assert.match(url, /^https:\/\/media\.tenor\.com\/\S+\.gif$/, `${name} has a bad URL: ${url}`);
+  }
+  actionEngine.resetRotation();
+  const seen = [];
+  for (let n = 0; n < GIFS.poke.length; n++) seen.push(actionEngine.nextGif('poke'));
+  assert.equal(new Set(seen).size, GIFS.poke.length, 'rotation serves every GIF once before repeating');
+  assert.equal(actionEngine.nextGif('poke'), GIFS.poke[0], 'rotation wraps around');
+});
+
+test('action: payload is V2, grey-only, accent-free and free of Unicode emoji', () => {
+  for (const name of actionEngine.NAMES) {
+    const payload = actionEngine.render(name, { id: 'owner' }, { id: '123456789012345678', bot: false }, 'kurisu');
+    assert.ok(Number(payload.flags) & MessageFlags.IsComponentsV2);
+    assert.ok(!allNodes(payload).some((n) => n.embeds || 'accent_color' in n));
+    assert.ok(!/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(plain(payload)), `${name} renders a Unicode emoji`);
+  }
+});
+
 test('prefix: per-guild prefix and typed ticket parsing', async () => {
   await repo.setGuild('gp', 'prefix', '?');
   assert.equal((await repo.getGuild('gp')).prefix, '?');
@@ -890,6 +954,66 @@ test('prefix: per-guild prefix and typed ticket parsing', async () => {
   };
   const parsedAttachment = await text.parseOptions(withAttachment, defs('botprofile', 'avatar'), []);
   assert.equal(parsedAttachment.values.image, attachment);
+});
+
+test('fun: rates are stable per user per day, ship scores are order independent', () => {
+  const day = '2026-01-01';
+  const first = funEngine.dailyRate('iq:owner', day);
+  assert.equal(funEngine.dailyRate('iq:owner', day), first, 'same seed and day is stable');
+  assert.ok(first >= 0 && first <= 100);
+  assert.equal(funEngine.shipScore('1', '2', day), funEngine.shipScore('2', '1', day), 'A+B == B+A');
+  assert.ok(funEngine.shipScore('1', '2', day) <= 100);
+  assert.ok(funEngine.rateLine('iq', 'owner').includes('<@owner>'));
+  assert.equal(funEngine.rateLine('nope', 'owner'), null);
+});
+
+test('fun: every content pool is non-empty and free of Unicode emoji', () => {
+  const emoji = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
+  for (const [name, list] of Object.entries({ eight: funEngine.EIGHT_BALL, roasts: funEngine.ROASTS, jokes: funEngine.JOKES, facts: funEngine.FACTS })) {
+    assert.ok(list.length >= 8, `${name} pool is too small`);
+    for (const line of list) assert.ok(!emoji.test(line), `${name} entry has a Unicode emoji: ${line}`);
+  }
+});
+
+test('fun: command renders V2 notices for each fun command', async () => {
+  const reply = async (payload) => { assert.ok(Number(payload.flags) & MessageFlags.IsComponentsV2); };
+  const base = { user: { id: 'owner' }, client: { user: { id: 'kurisu' } }, userLocale: 'en-US' };
+  const ok = { has: () => true };
+  const guild = { id: 'gfun', ownerId: 'owner', members: { me: { permissions: ok }, cache: new Map() }, channels: { cache: new Map() } };
+  const member = { id: 'owner', permissions: ok, roles: { highest: { position: 5 } } };
+  const run = async (name, extra = {}) => commands.get(name).execute({
+    ...base, guild, member, channelId: 'c1', inGuild: () => true, memberPermissions: ok, reply,
+    options: { getString: () => null, getInteger: () => null, getUser: () => null, ...extra },
+  });
+  await run('joke');
+  await run('fact');
+  await run('meme');
+  await run('coinflip');
+  await run('dice', { getInteger: () => 20 });
+  await run('eightball', { getString: () => 'Is this working?' });
+  await run('ship', { getUser: (n) => ({ id: n === 'first' ? '123456789012345678' : null }) });
+  await run('iq');
+  await run('luck');
+});
+
+test('reminders: stored, capped per user and delivered once by the tick', async () => {
+  const sent = [];
+  const channel = { isTextBased: () => true, send: async (p) => { sent.push(p); } };
+  const client = { channels: { fetch: async () => channel } };
+  const guildId = '123456789012345680';
+  const userId = '123456789012345681';
+  assert.equal(await repo.countReminders(guildId, userId), 0);
+  await repo.addReminder(guildId, { channelId: '123456789012345682', userId, message: 'drink water', dueAt: Date.now() - 1000 });
+  await repo.addReminder(guildId, { channelId: '123456789012345682', userId, message: 'later', dueAt: Date.now() + 3600_000 });
+  assert.equal(await repo.countReminders(guildId, userId), 2);
+
+  const delivered = await reminders.tick(client);
+  assert.equal(delivered, 1, 'only the due reminder is delivered');
+  assert.ok(Number(sent[0].flags) & MessageFlags.IsComponentsV2);
+  assert.match(plain(sent[0]), /drink water/);
+  assert.equal(await repo.countReminders(guildId, userId), 1, 'a delivered reminder is removed');
+
+  assert.equal(await reminders.tick(client), 0, 'nothing is delivered twice');
 });
 
 test('text commands: premium enable, activate and list work through the prefix pipeline', async () => {

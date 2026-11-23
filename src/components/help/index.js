@@ -19,6 +19,8 @@ const CATEGORIES = {
   verification: { emoji: E.modernVerify, name: 'Verification', desc: 'Verification and access control', blurb: 'Verification and access control.' },
   tickets: { emoji: E.ticket || E.staff, name: 'Tickets', desc: 'Private support tickets', blurb: 'Private support tickets and staff tools.' },
   premium: { emoji: E.crown, name: 'Premium', desc: 'Premium guild profile tools', blurb: 'Premium cosmetics; security is never gated.' },
+  action: { emoji: E.action, name: 'Action', desc: 'Fun interaction reactions', blurb: 'Hug, kiss, slap, pat and more, with a GIF.' },
+  fun: { emoji: E.fun, name: 'Fun', desc: 'Light community commands', blurb: 'Light commands for your community.' },
   utility: { emoji: E.redDot, name: 'Utility', desc: 'General bot commands', blurb: 'General bot commands.' },
 };
 
@@ -50,6 +52,7 @@ function collect(commands, prefix = '!') {
 }
 
 const byCategory = (entries, cat) => entries.filter((e) => e.category === cat);
+const icon = (emoji) => (emoji ? `${emoji} ` : ''); // null placeholder = no icon, label stays
 const uid = (id) => `kh:${id}`;
 
 const footer = (id, extra = []) => ui.buttons(...extra, ui.btn(`${uid(id)}:close`, 'Close'));
@@ -57,7 +60,7 @@ const categorySelect = (id, current) => ui.select(`${uid(id)}:sel`, 'Select a ca
   Object.entries(CATEGORIES).map(([value, c]) => ({ label: c.name, value, description: c.desc, emoji: c.emoji, default: value === current })));
 
 function mainView(id, prefix = '!') {
-  const lines = Object.values(CATEGORIES).map((c) => `${c.emoji} **${c.name}**\n-# ${c.desc}`).join('\n\n');
+  const lines = Object.values(CATEGORIES).map((c) => `${icon(c.emoji)}**${c.name}**\n-# ${c.desc}`).join('\n\n');
   return [
     `### ${E.crown} KURISU COMMAND CENTER`,
     `**Antinuke, Security & Moderation**\n-# Browse commands and manage your server with Kurisu.\n-# Text prefix: \`${prefix}\`  ·  Slash commands also work.`,
@@ -82,7 +85,7 @@ function categoryView(id, entries, cat, page = 0) {
   const nav = [ui.btn(`${uid(id)}:main`, 'Back')];
   if (pages > 1) nav.push(ui.btn(`${uid(id)}:cat:${cat}:${p - 1}`, 'Previous', { disabled: p === 0 }), ui.btn(`${uid(id)}:cat:${cat}:${p + 1}`, 'Next', { disabled: p >= pages - 1 }));
   return [
-    `### ${c.emoji} ${c.name.toUpperCase()}`,
+    `### ${icon(c.emoji)}${c.name.toUpperCase()}`,
     `${c.blurb}${pages > 1 ? `\n-# Page ${p + 1}/${pages}` : ''}`,
     'sep', body, 'sep',
     ...(slice.length ? [ui.select(`${uid(id)}:csel:${cat}:${p}`, 'View command details', slice.map((e) => ({ label: e.label, value: e.key, description: e.description })))] : []),
@@ -97,7 +100,7 @@ function detailView(id, entries, key, cat, page, prefix = '!') {
   const usage = `${e.label}${e.options.map((o) => ` ${o.name}:<${o.type}>`).join('')}`;
   const opts = e.options.length ? e.options.map((o) => `\`${o.name}\`  ${o.required ? 'Required' : 'Optional'}  ·  ${o.description}`).join('\n') : 'None';
   return [
-    `### ${c.emoji} ${e.label}`,
+    `### ${icon(c.emoji)}${e.label}`,
     e.description,
     'sep',
     `-# USAGE\n\`${usage}\``,

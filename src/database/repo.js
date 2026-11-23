@@ -290,6 +290,25 @@ async function recentJoins(guildId, limit = 10) {
 }
 async function pruneJoins(before) { await get().collection('join_history').deleteMany({ joined_at: { $lt: before } }); }
 
+// ---------- reminders ----------
+async function addReminder(guildId, { channelId, userId, message, dueAt }) {
+  const id = await nextId('reminders');
+  await get().collection('reminders').insertOne({
+    id, guild_id: idStr(guildId), channel_id: idStr(channelId), user_id: idStr(userId),
+    message: String(message).slice(0, 500), due_at: Number(dueAt), created_at: now(),
+  });
+  return id;
+}
+/** Reminders whose deadline has passed, oldest deadline first. */
+async function dueReminders(nowMs = Date.now(), limit = 25) {
+  const rows = await get().collection('reminders').find({ due_at: { $lte: Number(nowMs) } }).sort({ due_at: 1 }).limit(limit).toArray();
+  return rows.map(clean);
+}
+async function deleteReminder(id) { await get().collection('reminders').deleteOne({ id: Number(id) }); }
+async function countReminders(guildId, userId) {
+  return get().collection('reminders').countDocuments({ guild_id: idStr(guildId), user_id: idStr(userId) });
+}
+
 // ---------- whitelist ----------
 async function loadWhitelistCache(guildId) {
   const gid = idStr(guildId);
@@ -771,6 +790,7 @@ function _dropCaches() {
 module.exports = {
   ensureGuild, getGuild, setGuild, getModule, getAllModules, saveModule, getRaid, setRaid, getLockedChannels, saveLockedChannel,
   clearLockedChannels, activeLockdowns, addJoin, countJoins, recentJoins, pruneJoins, getWhitelist, listWhitelist, roleWhitelist, countWhitelist,
+  addReminder, dueReminders, deleteReminder, countReminders,
   addWhitelist, removeWhitelist, addCase, userCases, getCase, countUserCases, pageUserCases,
   addWarning, countWarnings, pageWarnings, addIncident, countIncidents, countIncidentsSince,
   lastIncident, pageIncidents, countExecutorIncidents, recentIncidentSince, getLogChannel, allLogChannels, setLogChannel,

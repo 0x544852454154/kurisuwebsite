@@ -82,10 +82,16 @@ async function main() {
   process.on('uncaughtException', (err) => log.error('uncaught exception', err));
 
   client.login(process.env.DISCORD_TOKEN).catch((err) => {
+    // discord.js surfaces gateway close code 4014 as a plain Error with no `code`,
+    // only this message text, so match on it as well.
+    const disallowed = err?.code === 'UsedDisallowedIntents' || /disallowed intents/i.test(err?.message || '');
     const hint = err?.code === 'TokenInvalid' || err?.message?.includes('token')
       ? 'The token is invalid or was reset - copy a fresh one from the Developer Portal.'
-      : err?.code === 'UsedDisallowedIntents'
-        ? 'Enable Server Members Intent and Message Content Intent in the Developer Portal.'
+      : disallowed
+        ? `Privileged intents are disabled for this application (gateway close code 4014).\n`
+          + `  Fix: https://discord.com/developers/applications/${process.env.CLIENT_ID || '<app id>'}/bot\n`
+          + '  Bot -> Privileged Gateway Intents -> enable Server Members Intent AND Message Content Intent -> Save Changes.\n'
+          + '  Kurisu needs Server Members (raid joins, antinuke member cache) and Message Content (!prefix commands).'
         : 'Could not log in to Discord.';
     fatal(hint, err);
   });

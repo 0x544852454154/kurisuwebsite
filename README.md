@@ -21,12 +21,15 @@ Current release: **2.1.0**. 42 top-level commands, 72 help entries, 28 antinuke 
 | Tickets | `/ticket panel\|setup\|close\|add\|remove\|claim\|list`, private channels, atomic numbering, max-open limit, confirmation close, optional log-channel-only transcripts |
 | Premium | Bot-owner-only `/premium enable\|activate\|disable\|list`; expiry is enforced lazily and at startup; security features are never gated |
 | Guild profile | `/botprofile avatar\|banner\|reset\|view` for premium servers; guild-member scoped, PNG/JPEG/GIF/WebP up to 8 MB, only flags stored |
-| Moderation | `/ban /unban /kick /timeout /untimeout /warn /warnings /purge /clear /slowmode /lock /unlock /hide /unhide /nickname /role add\|remove /softban /massban /masskick /case view\|user /banlist` |
+| Moderation | `/ban /unban /kick /timeout /untimeout /mute /unmute /warn /warnings /purge /clear /slowmode /lock /unlock /hide /unhide /nickname /role add\|remove /softban /massban /masskick /case view\|user /banlist` (`/mute` and `/unmute` are Discord-timeout aliases of `/timeout` and `/untimeout`) |
+| Action | `/action hug\|kiss\|slap\|pat\|cuddle\|poke\|dance\|cry\|laugh\|highfive\|handshake\|sleep\|eat\|drink`, rotating curated GIFs, V2 media gallery; also `!hug @user` via the prefix pipeline |
+| Fun | `/joke /fact /meme /roast /eightball /coinflip /dice /ship /lovecalc /iq /hot /simp /toxic /dumb /luck`; rates are deterministic per user per day |
+| Reminders | `/reminder set in:1h text:...` and `/reminder list`; delivered by a 30s tick, 10 per member, retried after a failed send |
 | Security Center | `/security` dashboard: modules, thresholds, punishments, whitelist, logs, raid, log channels, diagnostics, read-only premium status |
 | Command Center | `/help` generated from the real command definitions, category pages, detail pages, pagination, branded media |
 | Logs | antinuke, raid, moderation, member, message, channel, role, voice, configuration, ticket |
 | Recovery | Channel and role restore, role/channel/server-name revert, webhook removal, bot-add containment, invite cleanup; ticket channels are excluded |
-| Extra commands | `/raid`, `/verification`, `/quarantine release`, `/logs`, `/antinuke`, `/incidents`, `/watchlist`, `/guilds` (bot owner), `/prefix`, `/userinfo`, `/about`, `/dev`, `/invite`, `/ping`, `/serverinfo` |
+| Extra commands | `/raid`, `/verification`, `/quarantine release`, `/logs`, `/antinuke`, `/incidents`, `/watchlist`, `/guilds` (bot owner), `/prefix`, `/userinfo`, `/avatar`, `/banner`, `/servericon`, `/membercount`, `/say`, `/poll`, `/about`, `/dev`, `/invite`, `/ping`, `/serverinfo` |
 | Text commands | Per-server prefix (default `!`), e.g. `!help`, `!ping`, `!ticket panel #support`; same permission checks and V2 views as slash commands |
 | Mention card | Mentioning Kurisu replies with a branded Components V2 card (GIF + live bot stats + emoji invite button); 15s per-user cooldown |
 | Presence | The bot's status is `Watching <n> users`, refreshed every two minutes from the real member count |

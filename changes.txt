@@ -95,3 +95,22 @@ TESTS
 
 DO NOT COMMIT
   - .env, tokens, DATABASE_URL, MongoDB data files, SQLite files, the local zip.
+
+FUN, ACTION, REMINDERS AND UTILITY (migrated from "refer here for more commands")
+  - New engines: src/engines/action (14 interaction actions with rotating GIF
+    lists from src/config/gifs.js), src/engines/fun (deterministic daily rates,
+    ship scores, joke/fact/roast/8-ball pools), src/engines/reminder (30s tick).
+  - New commands: /action (one subcommand per action, so no top-level command
+    collides with a subcommand name), /joke /fact /meme /roast /eightball
+    /coinflip /dice /ship /lovecalc /iq /hot /simp /toxic /dumb /luck,
+    /mute /unmute (timeout aliases), /avatar /banner /servericon /membercount
+    /say /poll /reminder. Command count is now 67.
+  - Prefix aliases: !hug, !kiss, ... expand to /action <name> in src/text.
+  - Command loader supports bundled modules (`all` export, e.g. fun/commands.js).
+  - repo: reminder collection helpers (addReminder, dueReminders, deleteReminder,
+    countReminders); reminders.tick is scheduled on ClientReady.
+  - Help: new Action and Fun categories; categories without a dedicated emoji
+    render without an icon (null emoji placeholders are no longer reported).
+  - Login error for gateway close 4014 now prints the exact Developer Portal link.
+  - Website (index.html, /api/stats, npm run web) and the shared .vscode settings
+    were kept from the root project; they were absent in the reference copy.
