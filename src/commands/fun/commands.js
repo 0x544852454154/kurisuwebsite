@@ -7,8 +7,20 @@ const fun = require('../../engines/fun');
 const { E } = ui;
 const title = (name) => (E.fun ? `${E.fun} ${name}` : name);
 
-/** Headline + body, shared so every fun command looks identical. */
-const simple = (name, line) => ui.message([`### ${title(name)}`, 'sep', line]);
+/**
+ * Every fun command shares this card layout: section header with avatar, who
+ * asked, a timestamp, the body between two dividers and a footer, so a one-line
+ * answer still fills the message instead of a single thin text line.
+ */
+function card(i, name, line, { body = line, avatar } = {}) {
+  const pic = avatar || i.user?.displayAvatarURL?.({ extension: 'png', size: 128 });
+  const head = `${title(name)}\n-# Asked by <@${i.user.id}>  ·  <t:${Math.floor(Date.now() / 1000)}:f>`;
+  // Flatten: container() only reads top-level items, a nested array would vanish.
+  const items = [pic ? { section: head, thumbnail: pic } : `### ${head}`, 'sep', ...[].concat(body), 'sep', `-# ${title('KURISU')}  ·  /help for every command`];
+  return ui.message(items);
+}
+
+const corner = (n) => (n ? `> ${String(n).replace(/\n/g, '\n> ')}` : null);
 
 /** The reference bot's rate commands (iq / hot / simp / toxic / dumb) plus luck. */
 const rateCommand = (kind, description) => ({
@@ -20,7 +32,10 @@ const rateCommand = (kind, description) => ({
     const err = guard(i, {});
     if (err) return fail(i, err);
     const user = i.options.getUser('user') || i.user;
-    return i.reply(simple(fun.RATE_TITLES[kind].title, fun.rateLine(kind, user.id)));
+    return i.reply(card(i, fun.RATE_TITLES[kind].title, fun.rateLine(kind, user.id), {
+      body: fun.rateCard(kind, user.id),
+      avatar: user.displayAvatarURL?.({ extension: 'png', size: 128 }),
+    }));
   },
 });
 
@@ -47,7 +62,15 @@ const shipCommand = (name, headings, description) => ({
     const score = fun.shipScore(first.id, second.id);
     const verdict = score >= 90 ? 'Perfect match.' : score >= 70 ? 'Very strong.' : score >= 50 ? 'Worth a try.'
       : score >= 25 ? 'Rough waters.' : 'Not meant to be.';
-    return i.reply(simple(headings, `<@${first.id}>  ×  <@${second.id}>\n${fun.meter(score)}\n**${verdict}**`));
+    return i.reply(card(i, headings, score, {
+      body: [
+        `<@${first.id}>  ×  <@${second.id}>`,
+        fun.meter(score),
+        `**${verdict}**`,
+        'sep',
+        corner(`${first.username || 'First'}  +  ${second.username || 'Second'}`),
+      ],
+    }));
   },
 });
 
@@ -61,7 +84,8 @@ module.exports = {
       async execute(i) {
         const err = guard(i, {});
         if (err) return fail(i, err);
-        return i.reply(simple('JOKE', fun.pick(fun.JOKES)));
+        const joke = fun.pickLast('joke', fun.JOKES);
+        return i.reply(card(i, 'JOKE', joke, { body: fun.quote(joke) }));
       },
     },
     fact: {
@@ -70,7 +94,8 @@ module.exports = {
       async execute(i) {
         const err = guard(i, {});
         if (err) return fail(i, err);
-        return i.reply(simple('FACT', fun.pick(fun.FACTS)));
+        const fact = fun.pickLast('fact', fun.FACTS);
+        return i.reply(card(i, 'FACT', fact, { body: fun.quote(fact) }));
       },
     },
     meme: {
@@ -79,7 +104,9 @@ module.exports = {
       async execute(i) {
         const err = guard(i, {});
         if (err) return fail(i, err);
-        return i.reply(simple('MEME', 'The meme wall is empty right now.\n-# Add a meme pool to fill this command, or use /action for a GIF.'));
+        return i.reply(card(i, 'MEME', 'The meme wall is empty right now.', {
+          body: ['The meme wall is empty right now.', 'sep', '-# Add a meme pool to fill this command, or use /action for a GIF.'],
+        }));
       },
     },
     roast: {
@@ -92,7 +119,11 @@ module.exports = {
         const user = i.options.getUser('user', true);
         if (user.id === i.user.id) return fail(i, 'You cannot roast yourself. Pick someone else.');
         if (user.id === i.client.user.id) return fail(i, 'I will not roast myself.');
-        return i.reply(simple('ROAST', `<@${user.id}> ${fun.pick(fun.ROASTS)}`));
+        const roast = fun.pickLast('roast', fun.ROASTS);
+        return i.reply(card(i, 'ROAST', `<@${user.id}> ${roast}`, {
+          avatar: user.displayAvatarURL?.({ extension: 'png', size: 128 }),
+          body: [`<@${user.id}>`, fun.quote(roast), '-# Requested by you. Be kind out there.'],
+        }));
       },
     },
     eightball: {
@@ -103,7 +134,10 @@ module.exports = {
         const err = guard(i, {});
         if (err) return fail(i, err);
         const question = i.options.getString('question', true);
-        return i.reply(simple('MAGIC 8-BALL', `${fun.quote(question)}\n\n**${fun.pick(fun.EIGHT_BALL)}**`));
+        const answer = fun.pick(fun.EIGHT_BALL);
+        return i.reply(card(i, 'MAGIC 8-BALL', answer, {
+          body: [fun.quote(question), 'sep', `**${answer}**`, '-# The 8-ball is never wrong, only vague.'],
+        }));
       },
     },
     coinflip: {
@@ -112,7 +146,10 @@ module.exports = {
       async execute(i) {
         const err = guard(i, {});
         if (err) return fail(i, err);
-        return i.reply(simple('COIN FLIP', `The coin landed on **${Math.random() < 0.5 ? 'Heads' : 'Tails'}**.`));
+        const side = Math.random() < 0.5 ? 'Heads' : 'Tails';
+        return i.reply(card(i, 'COIN FLIP', side, {
+          body: [`### ${side}`, 'sep', `The coin landed on **${side}**.`, '-# Fifty-fifty, every single time.'],
+        }));
       },
     },
     dice: {
@@ -123,7 +160,10 @@ module.exports = {
         const err = guard(i, {});
         if (err) return fail(i, err);
         const sides = i.options.getInteger('sides') ?? 6;
-        return i.reply(simple('DICE ROLL', `You rolled a **${1 + Math.floor(Math.random() * sides)}** on a d${sides}.`));
+        const roll = 1 + Math.floor(Math.random() * sides);
+        return i.reply(card(i, 'DICE ROLL', roll, {
+          body: [`### ${roll}`, 'sep', `You rolled a **${roll}** on a d${sides}.`, `-# Fair d${sides}: every face has the same chance.`],
+        }));
       },
     },
     ship: shipCommand('ship', 'SHIP', 'Check compatibility between two people.'),

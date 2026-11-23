@@ -976,7 +976,8 @@ test('fun: every content pool is non-empty and free of Unicode emoji', () => {
 });
 
 test('fun: command renders V2 notices for each fun command', async () => {
-  const reply = async (payload) => { assert.ok(Number(payload.flags) & MessageFlags.IsComponentsV2); };
+  const replies = [];
+  const reply = async (payload) => { assert.ok(Number(payload.flags) & MessageFlags.IsComponentsV2); replies.push(payload); };
   const base = { user: { id: 'owner' }, client: { user: { id: 'kurisu' } }, userLocale: 'en-US' };
   const ok = { has: () => true };
   const guild = { id: 'gfun', ownerId: 'owner', members: { me: { permissions: ok }, cache: new Map() }, channels: { cache: new Map() } };
@@ -994,6 +995,21 @@ test('fun: command renders V2 notices for each fun command', async () => {
   await run('ship', { getUser: (n) => ({ id: n === 'first' ? '123456789012345678' : null }) });
   await run('iq');
   await run('luck');
+
+  // Cards are full messages: header, two dividers, body and a footer, not one line.
+  assert.equal(replies.length, 9);
+  for (const payload of replies) {
+    const nodes = allNodes(payload);
+    assert.ok(nodes.filter((n) => n.type === 10).length >= 2, 'at least a body and a footer text display');
+    assert.ok(nodes.filter((n) => n.type === 14).length >= 2, 'body sits between two dividers');
+    assert.ok(!nodes.some((n) => n.embeds || 'accent_color' in n));
+    assert.ok(!/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(plain(payload)), 'no Unicode emoji');
+  }
+  assert.ok(plain(replies[0]).includes('Asked by'), 'the card names who asked');
+  assert.match(plain(replies[7]), /<@owner>[^"]*IQ/, 'rate cards keep the score');
+  // A nested body array must never be dropped by the container builder.
+  assert.match(plain(replies[5]), /Is this working\?/, '8-ball keeps the question');
+  assert.match(plain(replies[5]), /\*\*[A-Z][^"]{4,}\*\*/, '8-ball keeps the answer');
 });
 
 test('reminders: stored, capped per user and delivered once by the tick', async () => {

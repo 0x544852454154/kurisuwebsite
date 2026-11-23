@@ -85,6 +85,15 @@ function shipScore(a, b, dayKey = new Date().toISOString().slice(0, 10)) {
 
 const pick = (list, rand = Math.random) => list[Math.floor(rand() * list.length) % list.length];
 
+/** Rotates a content pool so a repeated command does not repeat the last line. */
+function pickLast(name, list, rand = Math.random) {
+  let line = pick(list, rand);
+  if (list.length > 1 && line === POOL_LAST.get(name)) line = pick(list, rand);
+  POOL_LAST.set(name, line);
+  return line;
+}
+const POOL_LAST = new Map();
+
 const RATE_TITLES = {
   iq: { title: 'IQ TEST', min: 60, max: 165 },
   hot: { title: 'HOTNESS', min: 0, max: 100 },
@@ -108,10 +117,29 @@ function rateLine(kind, userId) {
   return `<@${userId}> ${meter(pct)}`;
 }
 
+/** Rank wording for a 0-100 score, so cards read like a result and not a number. */
+function verdict(pct) {
+  return pct >= 90 ? 'Exceptional.' : pct >= 75 ? 'Very high.' : pct >= 50 ? 'Above average.'
+    : pct >= 25 ? 'Below average.' : 'Room to grow.';
+}
+
+/** Full multi-line body for a rate card (same deterministic score as rateLine). */
+function rateCard(kind, userId) {
+  const conf = RATE_TITLES[kind];
+  if (!conf) return null;
+  const pct = conf.min === conf.max ? conf.min : conf.min + (dailyRate(`${kind}:${userId}`) % (conf.max - conf.min + 1));
+  if (kind === 'iq') {
+    const grade = pct >= 130 ? 'Gifted range.' : pct >= 110 ? 'Above average.' : pct >= 90 ? 'Average range.'
+      : pct >= 75 ? 'Below average.' : 'Room to grow.';
+    return `<@${userId}>\n**${pct}** IQ\n-# ${grade}`;
+  }
+  return `<@${userId}>\n${meter(pct)}\n-# ${verdict(pct)}\n-# Same score all day: it resets at the next UTC day.`;
+}
+
 function quote(inner) { return `> ${String(inner).replace(/\n/g, '\n> ')}`; }
 
 module.exports = {
   EIGHT_BALL, ROASTS, JOKES, FACTS, RATE_TITLES,
   EIGHT_BALL_LIMIT, TOPIC_LIMIT,
-  dailyRate, shipScore, pick, meter, rateLine, quote, E,
+  dailyRate, shipScore, pick, pickLast, meter, rateLine, rateCard, verdict, quote, E,
 };
