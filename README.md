@@ -322,3 +322,35 @@ edge cases. Never run destructive tests on a real community.
 | Punishment failed | Kurisu's role is below the executor's role, or it lacks Ban/Kick/Manage Roles/Moderate Members. |
 | Cannot log to a channel | Grant Kurisu View Channel and Send Messages there. |
 | Ticket channel not created | Check Manage Channels, the configured category and role hierarchy. |
+
+## Website
+
+`index.html` at the project root is the whole site: antinuke, detection, raid,
+whitelist, verification and tickets, commands, setup, the developer roster and
+terms. One file, no build step.
+
+The hero counts (users, communities and the server reel) are filled from
+`/api/stats`:
+
+- **Self-hosted** - `npm run web` starts the bot and the site on the same client.
+  See [`src/web/README.md`](src/web/README.md).
+- **Static hosting (Vercel)** - `api/stats.js` runs as a serverless function and
+  reads the guild list straight from the Discord API. Set `DISCORD_TOKEN` in the
+  project's environment variables and redeploy.
+
+Without either endpoint the page keeps its placeholders rather than showing
+zeros.
+
+## Development
+
+```powershell
+npm install
+npm run deploy      # register slash commands
+npm start           # run the bot
+npm run web         # run the bot and the website
+npm test            # node --test tests/kurisu.test.js
+```
+
+`scripts/find-unawaited.js` and `scripts/find-unawaited-ast.js` list async calls in
+`src/` that are never awaited, for reviewing fire-and-forget paths in the
+antinuke hot path.
