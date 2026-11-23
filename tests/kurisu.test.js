@@ -910,12 +910,22 @@ test('action: /action carries every interaction and the prefix aliases resolve t
   assert.match(plain(sent[0]), /<@owner> dances\./);
 });
 
-test('action: GIF list is complete, https-only and rotates without repeats', () => {
+test('action: every GIF is a full-size Tenor rendition, never the small preview', () => {
+  // AAAAM is Tenor's ~165-220px preview; Discord stretches gallery media to the
+  // message width, so a preview link renders soft and short. Only AAAAC
+  // (original) and AAAAd (large re-encode) are acceptable.
+  const PREVIEW = /AAAAM\//;
   for (const name of actionEngine.NAMES) {
     const list = GIFS[name];
     assert.ok(Array.isArray(list) && list.length >= 4, `${name} needs at least 4 GIFs`);
-    for (const url of list) assert.match(url, /^https:\/\/media\.tenor\.com\/\S+\.gif$/, `${name} has a bad URL: ${url}`);
+    for (const url of list) {
+      assert.match(url, /^https:\/\/media\.tenor\.com\/.+AAA[AC]d?\/\S+\.gif$/, `${name} has a malformed URL: ${url}`);
+      assert.ok(!PREVIEW.test(url), `${name} still uses a small preview rendition: ${url}`);
+    }
+    assert.equal(new Set(list).size, list.length, `${name} lists the same GIF twice`);
   }
+  const all = actionEngine.NAMES.flatMap((n) => GIFS[n]);
+  assert.equal(new Set(all).size, all.length, 'no GIF is shared between actions');
   actionEngine.resetRotation();
   const seen = [];
   for (let n = 0; n < GIFS.poke.length; n++) seen.push(actionEngine.nextGif('poke'));
