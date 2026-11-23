@@ -338,6 +338,82 @@ test('antinuke: bot add bans the executor and the unapproved bot, but leaves a t
   assert.ok(!second.banned.includes('goodbot'), 'trusted bot is not removed');
 });
 
+test('antinuke: a 30-channel wipe is rebuilt from the in-memory snapshot in one batch', async () => {
+  const restore = require('../src/engines/antinuke/restore');
+  const snapshot = require('../src/engines/antinuke/snapshot');
+  const gid = 'gwipe';
+  restore.clear(gid);
+  snapshot.clear(gid);
+
+  const created = [];
+  const puts = [];
+  const { guild, addMember, banned } = await preparedGuild(gid);
+  addMember('bad', { position: 3 });
+  guild.client = { user: { id: 'kurisu' }, rest: { put: async (route, opts) => { puts.push(opts.body); return []; } } };
+  guild.roles.cache.set('g1', role('g1', 0));
+
+  const admin = PermissionsBitField.Flags.Administrator;
+  const view = PermissionsBitField.Flags.ViewChannel;
+  const overwrites = new Map([['g1', {
+    id: 'g1', type: 0, allow: bits(view | admin), deny: bits(0),
+  }]]);
+  const source = (id, name, type, parentId, position) => ({
+    id, name, type, guild, parentId, rawPosition: position,
+    topic: type === ChannelType.GuildText ? `topic-${name}` : null,
+    nsfw: false, rateLimitPerUser: 0, bitrate: null, userLimit: null, isThread: () => false,
+    permissionOverwrites: { cache: overwrites },
+  });
+
+  const doomed = [source('cat', 'INFO', ChannelType.GuildCategory, null, 0)];
+  for (let i = 0; i < 29; i++) doomed.push(source(`c${i}`, `chan-${i}`, ChannelType.GuildText, 'cat', i + 1));
+  doomed.push(source('vc', 'voice', ChannelType.GuildVoice, 'cat', 40));
+  for (const ch of doomed) guild.channels.cache.set(ch.id, ch);
+  assert.equal(snapshot.capture(guild, { force: true }), doomed.length, 'every channel is snapshotted ahead of time');
+
+  guild.channels.create = async (opts) => {
+    const ch = {
+      id: `new${created.length + 1}`, name: opts.name, type: opts.type, guild,
+      parentId: opts.parent || null, rawPosition: opts.position ?? 0,
+      topic: opts.topic ?? null, nsfw: !!opts.nsfw, rateLimitPerUser: opts.rateLimitPerUser ?? 0,
+      bitrate: opts.bitrate ?? null, userLimit: opts.userLimit ?? null,
+      isThread: () => false, permissionOverwrites: { cache: new Map() },
+    };
+    created.push({ ch, opts });
+    guild.channels.cache.set(ch.id, ch);
+    return ch;
+  };
+
+  // The wipe: every channel deleted at once, one audit entry each.
+  await Promise.all(doomed.map((ch, i) => antinuke.handleAuditEntry(
+    audit(`w${i}`, A.ChannelDelete, 'bad', { targetId: ch.id }), guild,
+  )));
+  assert.ok(banned.includes('bad'), 'the executor is banned');
+
+  for (let i = 0; i < 80 && restore.rebuiltFor(gid).size < doomed.length; i++) await sleep(100);
+
+  assert.equal(restore.rebuiltFor(gid).size, doomed.length, 'every deleted channel was rebuilt');
+  assert.equal(created.length, doomed.length, 'nothing was dropped');
+
+  const categoryAt = created.findIndex((c) => c.opts.type === ChannelType.GuildCategory);
+  const firstChildAt = created.findIndex((c) => c.opts.type !== ChannelType.GuildCategory);
+  assert.ok(categoryAt >= 0, 'the category was rebuilt');
+  assert.ok(categoryAt < firstChildAt, 'categories are rebuilt before their children');
+  const child = created.find((c) => c.ch.name === 'chan-0');
+  assert.equal(child.opts.parent, created[categoryAt].ch.id, 'children land back inside the rebuilt category');
+  assert.equal(child.opts.topic, 'topic-chan-0', 'channel settings survive the rebuild');
+
+  const owned = child.opts.permissionOverwrites.find((o) => o.id === 'g1');
+  assert.equal(owned.allow.bitfield & BigInt(admin), 0n, 'dangerous overwrites are not restored');
+  assert.ok(owned.allow.bitfield & BigInt(view), 'safe overwrites are restored');
+
+  const ordered = puts.flat();
+  assert.ok(ordered.some((o) => o.position === 40), 'positions are restored in one bulk call');
+  assert.equal(snapshot.size(gid), doomed.length, 'rebuilt channels are snapshotted under their new ids');
+
+  restore.clear(gid);
+  snapshot.clear(gid);
+});
+
 test('punish: ban falls back to kick when Discord refuses the ban', async () => {
   const { guild, addMember, kicked } = fakeGuild({ id: 'gpun' });
   const member = addMember('bad');

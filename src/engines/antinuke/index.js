@@ -5,6 +5,8 @@ const perms = require('../../permissions');
 const recovery = require('../recovery');
 const logging = require('../logging');
 const punish = require('./punish');
+const snapshot = require('./snapshot');
+const restore = require('./restore');
 const log = require('../../utils/logger');
 const { MODULES, byAction } = require('./modules');
 const { DANGEROUS_BITS, PUNISHED_LABEL } = require('../../config/settings');
@@ -16,11 +18,13 @@ const locks = new Map();     // `${guild}:${exec}` -> expiry; after a breach, mo
 const punished = new Set();  // `${guild}:${exec}` -> an executor that was already punished in this lock window
 const mitigated = new Set(); // entry ids already reverted
 const recent = new Map();    // `${guild}:${exec}` -> [{ t, keys, key, entry }] for the cross-module Nuke Guard
+const heldSnaps = new Map(); // audit entry id -> channel state secured at delete time, before any await
+const badWebhooks = new Set(); // webhooks created by an executor we neutralised: their messages are deleted too
 const loadedRecent = new Set(); // guildId -> persisted nuke_recent rows loaded once at startup/boot for this process
 const alerted = new Map();   // `${guild}:${exec}:${module}` -> watch-alert expiry
 const LOCK_MS = 60_000;
 const NUKE_WATCH_MS = 24 * 3600 * 1000;
-const RESTORE_CONCURRENCY = 3;
+const RESTORE_CONCURRENCY = 6;
 // The dashboard allows module and Nuke Guard windows up to 300s. Keep burst
 // history for the full maximum so a configured window is never truncated.
 const RECENT_RETENTION_MS = 300_000;
@@ -104,7 +108,10 @@ async function cleanup() {
   for (const [k, arr] of windows) { const f = arr.filter((x) => n - x.t < 300_000); if (f.length) windows.set(k, f); else windows.delete(k); }
   for (const [k, arr] of recent) { const f = arr.filter((x) => n - x.t < RECENT_RETENTION_MS); if (f.length) recent.set(k, f); else recent.delete(k); }
   for (const [k, v] of alerted) if (v < n) alerted.delete(k);
+  for (const [k, v] of heldSnaps) if (n - v.t > 120_000) heldSnaps.delete(k);
   if (mitigated.size > 5000) mitigated.clear();
+  if (badWebhooks.size > 2000) badWebhooks.clear();
+  snapshot.sweep();
   try { await repo.pruneNukeWatch(n); } catch (err) { log.debug('nuke watch cleanup failed', err); }
   try { await repo.pruneNukeRecent(n - RECENT_RETENTION_MS); } catch (err) { log.debug('nuke recent cleanup failed', err); }
 }
@@ -166,6 +173,14 @@ async function handleAuditEntry(entry, guild) {
     seen.set(entry.id, Date.now());
     const executorId = entry.executorId;
     if (!executorId) return; // cannot attribute: never punish an arbitrary member
+
+    // Secure the channel's state synchronously, before the first await. A wipe
+    // deletes everything at once, and anything read later is already gone.
+    if (entry.action === AuditLogEvent.ChannelDelete) {
+      const held = snapshot.take(guild.id, entry.targetId);
+      if (held) heldSnaps.set(String(entry.id), { snap: held, t: Date.now() });
+    }
+
     if (!await ensureWarm(guild)) return;
 
     const g = repo.cachedGuild(guild.id);
@@ -205,7 +220,10 @@ async function handleAuditEntry(entry, guild) {
       }
     }
 
-    for (const { key, weight } of mods) await evaluate(guild, key, executorId, entry, weight);
+    // Every module is evaluated in the same tick. Serialising these used to put an
+    // awaited log delivery between detection and the ban.
+    await Promise.all(mods.map(({ key, weight }) => evaluate(guild, key, executorId, entry, weight)
+      .catch((err) => log.error(`antinuke evaluate failed (${key})`, err))));
   } catch (err) {
     log.error(`antinuke pipeline error in ${guild?.id}`, err);
   }
@@ -215,7 +233,8 @@ async function handleAuditEntry(entry, guild) {
 async function refreshSnapshot(guild, entry) {
   const A = AuditLogEvent;
   if ([A.ChannelCreate, A.ChannelUpdate, A.ChannelOverwriteCreate, A.ChannelOverwriteUpdate, A.ChannelOverwriteDelete].includes(entry.action)) {
-    const ch = guild.channels.cache.get(entry.targetId); if (ch) await recovery.snapshotChannel(ch);
+    const ch = guild.channels.cache.get(entry.targetId);
+    if (ch) { snapshot.remember(guild.id, ch); await recovery.snapshotChannel(ch); }
   } else if ([A.RoleCreate, A.RoleUpdate].includes(entry.action)) {
     const r = guild.roles.cache.get(entry.targetId); if (r) await recovery.snapshotRole(r);
   }
@@ -441,13 +460,24 @@ async function mitigate(guild, key, entry, executorId) {
   if (mitigated.has(id)) return null;
   mitigated.add(id);
   switch (entry.action) {
-    case A.ChannelDelete: return `channel: ${await recovery.restoreChannel(guild, entry.targetId)}`;
+    case A.ChannelDelete: {
+      // Batched: a wipe deletes every channel at once, so the rebuilds are collected
+      // and replayed as one burst instead of one awaited REST call per channel.
+      const held = heldSnaps.get(String(entry.id));
+      heldSnaps.delete(String(entry.id));
+      return `channel: ${restore.enqueue(guild, held?.snap || null, entry.targetId, 'Kurisu recovery: channel restored')}`;
+    }
     case A.RoleDelete: return `role: ${await recovery.restoreRole(guild, entry.targetId)}`;
     case A.ChannelCreate: { const c = guild.channels.cache.get(entry.targetId); if (c) { await c.delete('Kurisu: removed during antinuke response').catch(() => {}); return 'created channel removed'; } return null; }
     case A.RoleCreate: { const r = guild.roles.cache.get(entry.targetId); if (r) { await r.delete('Kurisu: removed during antinuke response').catch(() => {}); return 'created role removed'; } return null; }
     case A.ChannelUpdate: return `channel: ${await recovery.revertChannelUpdate(guild, entry)}`;
     case A.RoleUpdate: return `role: ${await recovery.revertRoleUpdate(guild, entry)}`;
-    case A.WebhookCreate: return `webhook: ${await recovery.deleteWebhook(guild, entry.targetId)}`;
+    case A.WebhookCreate: {
+      // Remember it, so messages the webhook already posted are cleaned up too.
+      if (badWebhooks.size > 2000) badWebhooks.clear();
+      badWebhooks.add(String(entry.targetId));
+      return `webhook: ${await recovery.deleteWebhook(guild, entry.targetId)}`;
+    }
     case A.BotAdd: return `bot: ${await recovery.containBotAdd(guild, entry.targetId, executorId, { trusted: perms.isTrustedBot(guild, entry.targetId) })}`;
     case A.InviteCreate: return `invites: ${await recovery.deleteInvitesBy(guild, executorId)}`;
     case A.GuildUpdate: return `server: ${await recovery.revertGuildUpdate(guild, entry)}`;
@@ -467,6 +497,12 @@ async function mitigate(guild, key, entry, executorId) {
 /** Message-based modules: @everyone and mass mention. */
 async function handleMessage(message) {
   try {
+    // A webhook that was created (and killed) by an executor we neutralised may
+    // already have posted its spam. Delete whatever it sends from now on.
+    if (message.webhookId && badWebhooks.has(String(message.webhookId))) {
+      await message.delete().catch(() => {});
+      return;
+    }
     if (!message.guild || !message.member || message.webhookId || message.system) return;
     if (!await ensureWarm(message.guild)) return;
     const g = repo.cachedGuild(message.guild.id);
@@ -509,5 +545,6 @@ async function evaluateMessage(guild, key, executorId, weight, message, cfg = re
 
 module.exports = {
   handleAuditEntry, handleMessage, handleJoin, slide, classify, trackNuke, actionLabel, ensureRecentLoaded, watchExecutor,
-  _state: { windows, seen, locks, punished, recent, alerted, loadedRecent },
+  _state: { windows, seen, locks, punished, recent, alerted, loadedRecent, heldSnaps, badWebhooks },
+  snapshot, restore,
 };

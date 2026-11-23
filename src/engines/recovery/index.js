@@ -70,18 +70,32 @@ async function snapshotGuild(guild) {
   }
 }
 
+/**
+ * Capture a channel that was just deleted. The state is remembered synchronously,
+ * before any await: during a wipe the audit entry that triggers the restore can
+ * arrive before a database round-trip returns, and a restore that has to wait for
+ * this would find nothing and give up.
+ */
 async function noteDeletedChannel(ch) {
   if (!ch.guild) return;
-  if (await repo.getTicketByChannel(ch.guild.id, ch.id).catch(() => null)) return;
-  remember('channel', ch.id, serializeChannel(ch));
+  const data = serializeChannel(ch);
+  remember('channel', ch.id, data);
+  // Ticket channels belong to the ticket system, which rebuilds them itself.
+  if (await repo.getTicketByChannel(ch.guild.id, ch.id).catch(() => null)) {
+    deletedCache.delete(`channel:${ch.id}`);
+  }
 }
 function noteDeletedRole(r) { if (!r.managed) remember('role', r.id, serializeRole(r)); }
 
 async function lookup(guildId, kind, id) {
-  for (let i = 0; i < 6; i++) {
-    const hit = deletedCache.get(`${kind}:${id}`);
-    if (hit) return hit.data;
-    await sleep(250);
+  const hit = deletedCache.get(`${kind}:${id}`);
+  if (hit) return hit.data;
+  // The snapshot is normally written by noteDeletedChannel in the same tick as the
+  // delete event; a short wait covers gateway event ordering, never a lost restore.
+  for (let i = 0; i < 3; i++) {
+    await sleep(100);
+    const late = deletedCache.get(`${kind}:${id}`);
+    if (late) return late.data;
   }
   const snap = await repo.getSnapshot(guildId, kind, id);
   return snap?.data || null;

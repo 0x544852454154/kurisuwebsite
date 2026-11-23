@@ -60,6 +60,8 @@ async function snapshotAll(client) {
       await antinuke.ensureRecentLoaded(guild.id).catch(() => {});
       // Do not capture state while an incident is fresh: it may be the attacker's state.
       if (await repo.recentIncidentSince(guild.id, Date.now() - 15 * 60 * 1000)) continue;
+      // In-memory first: it is what a burst restore reads, with no database in the way.
+      antinuke.snapshot.capture(guild);
       await recovery.snapshotGuild(guild);
     } catch (err) { log.warn(`snapshot failed for ${guild.id}`, err); }
   }
@@ -111,10 +113,16 @@ module.exports = [
   { name: Events.GuildCreate, async execute(guild, client) {
     await repo.warmGuild(guild.id);
     try { await antinuke.ensureRecentLoaded(guild.id); } catch (e) { log.debug('nuke recent load failed', e); }
+    antinuke.snapshot.capture(guild, { force: true });
     try { await recovery.snapshotGuild(guild); } catch (e) { log.warn('snapshot failed', e); }
     refreshPresence(client);
   } },
-  { name: Events.GuildDelete, async execute(guild, client) { refreshPresence(client); } },
+  { name: Events.GuildDelete, async execute(guild, client) {
+    // Nothing to restore in a guild the bot is no longer in: free its state.
+    antinuke.snapshot.clear(guild.id);
+    antinuke.restore.clear(guild.id);
+    refreshPresence(client);
+  } },
   {
     name: Events.InteractionCreate,
     async execute(interaction) {
@@ -161,7 +169,15 @@ module.exports = [
     if (!banned) await raid.onJoin(member);
   } },
   { name: Events.GuildMemberRemove, async execute(member, client) { queuePresence(client); } },
-  { name: Events.ChannelDelete, async execute(channel) { if (channel.guild) await recovery.noteDeletedChannel(channel); } },
+  { name: Events.ChannelDelete, async execute(channel) {
+    if (!channel.guild) return;
+    // Freeze the snapshot immediately: the attacker's own channels and the
+    // category -> no-parent updates that follow must not overwrite clean state.
+    antinuke.snapshot.markDelete(channel.guild.id);
+    await recovery.noteDeletedChannel(channel);
+  } },
+  { name: Events.ChannelCreate, async execute(channel) { if (channel.guild) antinuke.snapshot.remember(channel.guild.id, channel); } },
+  { name: Events.ChannelUpdate, async execute(_, channel) { if (channel?.guild) antinuke.snapshot.remember(channel.guild.id, channel); } },
   { name: Events.GuildRoleDelete, async execute(role) { await recovery.noteDeletedRole(role); } },
   { name: Events.Error, async execute(err) { log.error('client error', err); } },
   { name: Events.ShardDisconnect, async execute(ev, id) { log.warn(`shard ${id} disconnected`, { code: ev?.code }); } },
