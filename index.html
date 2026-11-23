@@ -107,19 +107,28 @@ a:focus-visible,button:focus-visible{outline:2px solid #fff;outline-offset:3px}
 .pw{position:relative;min-width:0}pre{margin:0;padding:20px 22px;border-radius:18px;font-size:13px;line-height:1.7;color:#dcdcdc;overflow-x:auto;background:rgba(10,10,10,.5)}
 .cp{position:absolute;top:10px;right:10px;z-index:2;min-height:30px;padding:0 12px;font:12px 'JetBrains Mono',monospace}
 .list{list-style:none;display:flex;flex-direction:column;gap:10px;color:var(--mute)}.list li{display:grid;grid-template-columns:14px minmax(0,1fr);gap:10px}.list li::before{content:"";width:6px;height:6px;margin-top:10px;background:#f4f4f4;border-radius:50%;box-shadow:0 0 8px #fff}
-.devs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:16px}
-.dev{display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.dev:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 26px 60px -22px #000,0 0 46px -10px var(--ac)}
-.dev::before{background:linear-gradient(135deg,rgba(255,255,255,.5),rgba(255,255,255,.05) 40%,rgba(255,255,255,.05) 60%,rgba(255,255,255,.35))}.dev:hover::before{background:linear-gradient(135deg,var(--ac),rgba(255,255,255,.08) 45%,var(--ac))}
-.bn{height:104px;background:linear-gradient(135deg,var(--ac),#111 80%);position:relative;overflow:hidden}.bn img{display:block;width:100%;height:100%;object-fit:cover;filter:grayscale(1) brightness(.7);transition:filter .4s}.dev:hover .bn img{filter:none}
-.db{display:flex;flex-direction:column;gap:10px;padding:0 20px 20px;min-width:0}
-.av{width:76px;height:76px;margin-top:-38px;border-radius:50%;border:4px solid #0b0b0b;background:#1c1c1c;object-fit:cover;display:flex;align-items:center;justify-content:center;font:600 28px 'Space Grotesk',sans-serif;position:relative;z-index:1}
-.dn{font:600 22px/1.15 'Space Grotesk',sans-serif;letter-spacing:-.015em;overflow-wrap:anywhere}
-.dh{font:13px 'JetBrains Mono',monospace;color:var(--mute);overflow-wrap:anywhere}
-.dr{align-self:flex-start;font:11px 'JetBrains Mono',monospace;letter-spacing:.12em;text-transform:uppercase;padding:4px 10px;border:1px solid var(--line);border-radius:999px}
-.ds{display:flex;align-items:center;gap:8px;font-size:14px}.da{font-size:14px;color:var(--mute);overflow-wrap:anywhere}.di{font:11px 'JetBrains Mono',monospace;color:#7d7d7d;overflow-wrap:anywhere}
-.sd{flex:none;width:10px;height:10px;border-radius:50%;border:1.5px solid #f4f4f4;transition:all .5s var(--spring)}
-.sd.online{background:#f4f4f4;box-shadow:0 0 10px #fff}.sd.idle{background:linear-gradient(90deg,#f4f4f4 50%,transparent 50%)}.sd.dnd{background:#f4f4f4;border-radius:2px}.sd.offline{border-color:#6b6b6b}
+/* developers: role on top, circular pfp, name underneath */
+.devs{display:flex;flex-direction:column;gap:20px}
+.team{position:relative;display:grid;grid-template-columns:minmax(0,168px) minmax(0,1fr);align-items:start;gap:16px 32px;padding:26px 28px;border-radius:24px;background:var(--glass);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 18px 50px -30px #000}
+.role{display:block;padding-top:4px;font:600 13px/1.2 'Space Grotesk',sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#fff}
+.role-head{display:flex;align-items:center;gap:10px}
+.role-head span:first-child{display:inline-flex;align-items:center;gap:10px;flex:none}
+.role-head span:first-child::before{content:"";width:6px;height:6px;background:#f4f4f4;transform:rotate(45deg);box-shadow:0 0 8px #fff;flex:none}
+.ct{font:11px 'JetBrains Mono',monospace;letter-spacing:0;color:var(--mute);flex:none}
+.people{display:flex;flex-wrap:wrap;gap:28px 32px}
+.mem{display:flex;flex-direction:column;align-items:center;gap:12px;width:104px;border-radius:20px;outline-offset:6px}
+.pf{position:relative;display:block;width:76px;height:76px;border-radius:50%;background:#161616;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);transition:box-shadow .4s,transform .5s var(--spring)}
+.mem:hover .pf{transform:translateY(-3px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),0 0 30px -6px rgba(255,255,255,.5)}
+.pf img,.pf b{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover;display:grid;place-items:center;transition:opacity .3s;color:var(--mute);letter-spacing:.04em;font:500 20px 'Space Grotesk',sans-serif}
+.pf img{opacity:1}.pf b{opacity:0}
+.sd.dot{position:absolute;right:0;bottom:2px;width:14px;height:14px;border:3px solid #0b0b0b;background:#060606;animation:none;box-shadow:none;transition:all .4s var(--spring)}
+.sd.dot.online{background:#f4f4f4;box-shadow:0 0 10px rgba(255,255,255,.9)}
+.sd.dot.idle{background:linear-gradient(90deg,#f4f4f4 50%,#2a2a2a 50%)}
+.sd.dot.dnd{background:#f4f4f4;border-radius:4px}
+.sd.dot.offline{background:#2a2a2a}
+.nm{font-size:13px;line-height:1.3;color:var(--ink);text-align:center;max-width:100%;overflow-wrap:anywhere;transition:color .25s}
+.mem:hover .nm{color:#fff}
+@media(max-width:700px){.team{grid-template-columns:minmax(0,1fr);padding:22px}.people{gap:22px 18px}.mem{width:84px}.pf{width:68px;height:68px}}
 .foot{margin-top:0;padding-top:32px;padding-bottom:48px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px 32px;color:var(--mute);font-size:14px}
 .rv{opacity:0;transform:translateY(24px);filter:blur(8px);transition:opacity .9s,transform .9s var(--spring),filter .9s,box-shadow .4s;transition-delay:calc(var(--d,0)*70ms)}
 .rv.vis{opacity:1;transform:none;filter:none}.g.rv.vis:hover{transform:translateY(-4px)}
@@ -263,7 +272,7 @@ html:not(.js) .kl{clip-path:none}
 </div></section>
 
 <section class="wrap sec view" id="developers">
-<div class="head rv"><span class="label">Developers</span><h2 class="h2">The people behind it.</h2><p class="lede">Live Discord status and activity for each developer, refreshed every 30 seconds through Lanyard.</p></div>
+<div class="head rv"><span class="label">Developers</span><h2 class="h2">The people behind it.</h2><p class="lede">Live Discord status and activity for the whole team, refreshed every 30 seconds through Lanyard.</p></div>
 <div class="devs" id="devs"></div>
 </section>
 
@@ -290,24 +299,54 @@ html:not(.js) .kl{clip-path:none}
 var $=function(s,r){return(r||document).querySelector(s)},$$=function(s,r){return[].slice.call((r||document).querySelectorAll(s))};
 var RM=matchMedia('(prefers-reduced-motion:reduce)').matches,root=document.documentElement,isl=$('#isl'),pill=$('#pill'),cur=$('#cur');
 
-/* developers + Lanyard (live when hosted on your own site) */
-var DEVS=[['1521890728094208122','a0','#6f86ff','tfw%20no%20elf%20ears.gif'],['1124369205727330346','a1','#c66fff','download%20(5).gif'],['1441623190412726355','a2','#3fd0c9','IMG_8771.gif'],['1530686788824469646','a3','#ff7a9c','download%20(3).gif'],['1538978329082863796','a4','#8affb0','ascii-art%20(7).gif']];
-var LB={online:'Online',idle:'Idle',dnd:'Do not disturb',offline:'Offline'},box=$('#devs');
-DEVS.forEach(function(d){var a=document.createElement('article');a.className='dev g rv';a.style.setProperty('--ac',d[2]);
-a.innerHTML='<div class="bn"><img alt="" loading="lazy" src="https://file.garden/am9m147l3hw3nqT1/'+d[3]+'" onerror="this.remove()"></div><div class="db"><div class="av" data-f="av">D</div><h3 class="dn" data-f="n">Developer</h3><span class="dh" data-f="h" hidden></span><span class="dr">Developer</span><div class="ds"><span class="sd offline" data-f="sd"></span><span data-f="sl">Loading status</span></div><p class="da" data-f="ac" hidden></p><span class="di">ID '+d[0]+'</span></div>';
-box.appendChild(a);d.push(a)});
+/* developers: circle pfp, names below, roles on top, live status from Lanyard */
+var TEAM=[
+{role:'Owner',ids:['1521890728094208122']},
+{role:'Co Owners',ids:['1435594923461181490','1386990072741761056','1530686788824469646']},
+{role:'Moderators',ids:['1171795062091423784','1124369205727330346','1441623190412726355','1538978329082863796']}
+];
+var LB={online:'Online',idle:'Idle',dnd:'Do not disturb',offline:'Offline'},box=$('#devs'),MEM=[],PROFILE={};
 function F(a,k){return $('[data-f='+k+']',a)}
-function put(d,r){var a=d[4];
-if(!r){F(a,'sl').textContent='Status unavailable';return}
-if(r.miss){F(a,'sl').textContent='Not on Lanyard';return}
-var u=r.discord_user||{},nm=u.global_name||u.username||'Developer',st=r.discord_status||'offline',av=F(a,'av');
-F(a,'n').textContent=nm;var h=F(a,'h');h.hidden=!u.username;h.textContent=u.username?'@'+u.username:'';
-if(u.avatar){var s='https://cdn.discordapp.com/avatars/'+u.id+'/'+u.avatar+(String(u.avatar).indexOf('a_')===0?'.gif':'.png')+'?size=256';if(av.dataset.s!==s){av.dataset.s=s;av.innerHTML='';var i=new Image();i.className='av';i.style.cssText='margin:0;width:100%;height:100%;border:0';i.alt='';i.src=s;i.onerror=function(){av.textContent=nm.charAt(0).toUpperCase()};av.style.overflow='hidden';av.appendChild(i)}}else av.textContent=nm.charAt(0).toUpperCase();
-F(a,'sd').className='sd '+st;F(a,'sl').textContent=LB[st]||'Offline';
-var ac=r.activities||[],cu=ac.filter(function(x){return x.type===4})[0],ot=ac.filter(function(x){return x.type!==4})[0],t='';
-if(r.listening_to_spotify&&r.spotify)t='Listening to '+r.spotify.song+' by '+r.spotify.artist;else if(ot)t=(ot.type===0?'Playing ':'')+ot.name+(ot.details?' / '+ot.details:'');else if(cu&&cu.state)t=cu.state;
-var p=F(a,'ac');p.hidden=!t;p.textContent=t}
-function poll(){DEVS.forEach(function(d){try{fetch('https://api.lanyard.rocks/v1/users/'+d[0]).then(function(r){return r.json()}).then(function(j){put(d,j&&j.success?j.data:{miss:1})}).catch(function(){put(d,null)})}catch(e){put(d,null)}})}
+TEAM.forEach(function(t){
+var sec=document.createElement('section');sec.className='team rv';
+sec.innerHTML='<h3 class="role"><div class="role-head"><span>'+t.role+'</span><span class="ct">'+t.ids.length+'</span></div></h3><div class="people"></div>';
+var rows=$('.people',sec);
+t.ids.forEach(function(id){
+var m={id:id,role:t.role};MEM.push(m);
+var c=document.createElement('a');c.className='mem';c.href='https://discord.com/users/'+id;c.target='_blank';c.rel='noopener';c.setAttribute('aria-label','Discord profile of '+id);
+/* no <img src> yet: the ending hash of the id is not an avatar hash, so a
+   request would 404 and get blocked. The picture arrives from Lanyard below. */
+c.innerHTML='<span class="pf"><img alt="" decoding="async" data-f="img"><b data-f="ini">'+id.slice(-2).toUpperCase()+'</b><i class="sd dot offline" data-f="sd" title="Loading"></i></span><span class="nm" data-f="n" title="'+id+'">'+id+'</span>';
+rows.appendChild(c);m.el=c});
+box.appendChild(sec)});
+
+/* avatar URLs tried in order: the live hash as webp, then png, then gif for
+   animated ones. The first one that loads wins. When every frame of that hash
+   fails, the name initial stays up instead of a broken image. */
+function avatar(u,set){var id=String(u.id||''),h=String(u.avatar||''),gif=h.indexOf('a_')===0,list=[];
+if(h){var base='https://cdn.discordapp.com/avatars/'+id+'/'+h;
+if(gif)list.push(base+'.gif?size=256');
+list.push(base+'.webp?size=256',base+'.png?size=256',base+'.webp?size=128')}
+if(!list.length){set(null);return}
+var n=0;(function attempt(){if(n>=list.length){set(null);return}
+var p=new Image();p.onload=function(){set(list[n])};p.onerror=function(){n++;attempt()};p.src=list[n]})()}
+function setPfp(m,u){if(!u)return;var img=F(m.el,'img'),b=F(m.el,'ini'),key=String(u.avatar||'')+'|'+u.id;
+var ai=u.global_name||u.username;
+if(ai&&!/[\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0E00-\u0E7F]/i.test(ai))b.textContent=ai.charAt(0).toUpperCase();
+if(m.key===key)return;m.key=key;
+avatar(u,function(src){if(!src)return;img.onerror=function(){m.key='';img.style.opacity=0;b.style.opacity=1};
+img.onload=function(){img.style.opacity=1;b.style.opacity=0};img.src=src})}
+
+/* Lanyard: live status, display name and the real avatar hash. A 404 means the
+   account is not in the Lanyard bot's servers, so the name stays the ID. */
+function put(m,r){var el=m.el;
+var u=r.discord_user||{},nm=u.global_name||u.username||'',st=r.discord_status||'offline';
+if(nm){F(el,'n').textContent=nm;el.setAttribute('aria-label',nm+' - Discord profile')}
+var d=F(el,'sd');d.className='sd dot '+st;d.title=LB[st]||'Offline';
+setPfp(m,u)}
+function poll(){MEM.forEach(function(m){
+fetch('https://api.lanyard.rest/v1/users/'+m.id).then(function(r){if(r.status===404)return null;return r.json()})
+.then(function(j){if(j&&j.success!==false&&j.data)put(m,j.data)}).catch(function(){})})}
 poll();setInterval(poll,30000);
 /* servers + users (PLACEHOLDERS: replaced by /api/stats when served by web.js or the Vercel function; a plain static host keeps these) */
 var PROOF={users:'00,000',servers:'000',list:[],norm:0};
