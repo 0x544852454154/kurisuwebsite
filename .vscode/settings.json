@@ -1,0 +1,16 @@
+{
+    "git.autofetch": true,
+    "git.confirmSync": false,
+    "files.eol": "\n",
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "editor.formatOnSave": false,
+    "editor.detectIndentation": false,
+    "editor.indentSize": 2,
+    "editor.tabSize": 2,
+    "javascript.preferences.quoteStyle": "single",
+    "npm.packageManager": "npm",
+    "[javascript]": {
+        "editor.tabSize": 2
+    }
+}
